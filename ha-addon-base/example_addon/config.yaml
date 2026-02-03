@@ -1,5 +1,5 @@
 name: "Diploma Example Addon"
-version: "0.1.0"
+version: "0.1.1"
 slug: "diploma_example"
 description: "Base addon for diploma project"
 startup: services
