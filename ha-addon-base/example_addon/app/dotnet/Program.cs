@@ -1,8 +1,24 @@
+using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// HttpClient для общения с Home Assistant Supervisor API
+builder.Services.AddHttpClient("hass", client =>
+{
+    var baseUrl = Environment.GetEnvironmentVariable("SUPERVISOR_API_URL")
+                  ?? "http://supervisor/core/api";
+    var token = Environment.GetEnvironmentVariable("SUPERVISOR_TOKEN");
+
+    client.BaseAddress = new Uri(baseUrl);
+    if (!string.IsNullOrWhiteSpace(token))
+    {
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+    }
+});
 
 var app = builder.Build();
 
@@ -193,6 +209,10 @@ app.MapGet("/", async context =>
             .right-card {
                 background: radial-gradient(circle at top right, rgba(56, 189, 248, 0.18), rgba(15, 23, 42, 0.96));
             }
+            .entities-card {
+                margin-top: 1rem;
+                background: radial-gradient(circle at top, rgba(34, 197, 94, 0.14), rgba(15, 23, 42, 0.96));
+            }
             .metric-row {
                 display: flex;
                 justify-content: space-between;
@@ -242,6 +262,81 @@ app.MapGet("/", async context =>
             }
             .timeline-meta {
                 color: #9ca3af;
+            }
+            .entities-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 0.5rem;
+                margin-bottom: 0.4rem;
+            }
+            .entities-controls {
+                display: flex;
+                align-items: center;
+                gap: 0.4rem;
+                flex-wrap: wrap;
+                justify-content: flex-end;
+            }
+            .entities-badge {
+                font-size: 0.75rem;
+                padding: 0.1rem 0.5rem;
+                border-radius: 999px;
+                border: 1px solid rgba(52, 211, 153, 0.7);
+                color: #bbf7d0;
+                background: rgba(6, 78, 59, 0.35);
+            }
+            .entities-list {
+                max-height: 240px;
+                overflow: auto;
+                margin-top: 0.4rem;
+                padding-right: 0.15rem;
+            }
+            .entities-select {
+                background: rgba(15, 23, 42, 0.95);
+                border-radius: 999px;
+                border: 1px solid rgba(75, 85, 99, 0.9);
+                color: #e5e7eb;
+                font-size: 0.75rem;
+                padding: 0.2rem 0.6rem;
+            }
+            .view-toggle {
+                background: rgba(15, 23, 42, 0.95);
+                border-radius: 999px;
+                border: 1px solid rgba(55, 65, 81, 0.9);
+                color: #9ca3af;
+                font-size: 0.75rem;
+                padding: 0.15rem 0.6rem;
+                cursor: pointer;
+            }
+            .view-toggle-active {
+                color: #e5e7eb;
+                border-color: rgba(129, 140, 248, 0.9);
+                background: rgba(30, 64, 175, 0.5);
+            }
+            .entity-row {
+                display: grid;
+                grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr);
+                gap: 0.4rem;
+                padding: 0.3rem 0.15rem;
+                border-bottom: 1px solid rgba(31, 41, 55, 0.9);
+                font-size: 0.78rem;
+            }
+            .entity-row:last-child {
+                border-bottom: none;
+            }
+            .entity-id {
+                color: #e5e7eb;
+                word-break: break-all;
+            }
+            .entity-domain {
+                color: #a5b4fc;
+            }
+            .entity-state {
+                color: #fde68a;
+            }
+            .entities-error {
+                font-size: 0.8rem;
+                color: #fecaca;
             }
             code {
                 font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
@@ -351,9 +446,141 @@ app.MapGet("/", async context =>
                     <p style="margin-top:0.8rem; font-size:0.78rem; color:#9ca3af;">
                         Health endpoint: <code>/health</code> (JSON). Use it from Home Assistant or scripts to confirm that the addon is online.
                     </p>
+                    <div class="card entities-card">
+                        <div class="entities-header">
+                            <h2 style="margin:0; font-size:0.9rem; letter-spacing:0.03em; text-transform:uppercase; color:#9ca3af;">
+                                Home Assistant entities
+                            </h2>
+                            <div class="entities-controls">
+                                <select id="entities-domain" class="entities-select">
+                                    <option value="all">All domains</option>
+                                    <option value="light">light</option>
+                                    <option value="sensor">sensor</option>
+                                    <option value="switch">switch</option>
+                                    <option value="binary_sensor">binary_sensor</option>
+                                    <option value="climate">climate</option>
+                                </select>
+                                <button id="entities-view-toggle" type="button" class="view-toggle view-toggle-active">Compact</button>
+                                <span id="entities-count" class="entities-badge">loading…</span>
+                            </div>
+                        </div>
+                        <div id="entities-error" class="entities-error" style="display:none;"></div>
+                        <div id="entities-list" class="entities-list">
+                            <div style="font-size:0.8rem; color:#6b7280;">Loading entities from Home Assistant API…</div>
+                        </div>
+                    </div>
                 </section>
             </section>
         </main>
+        <script>
+            let allEntities = [];
+            let viewMode = "compact";
+
+            function renderEntities() {
+                const list = document.getElementById("entities-list");
+                const countBadge = document.getElementById("entities-count");
+                const errorBox = document.getElementById("entities-error");
+                const domainSelect = document.getElementById("entities-domain");
+                const toggleBtn = document.getElementById("entities-view-toggle");
+                if (!list || !countBadge || !errorBox || !domainSelect || !toggleBtn) return;
+
+                const selectedDomain = domainSelect.value || "all";
+                const filtered = allEntities.filter(st => {
+                    const entityId = st.entity_id || "";
+                    const domain = entityId.includes(".") ? entityId.split(".")[0] : "other";
+                    return selectedDomain === "all" || domain === selectedDomain;
+                });
+
+                const maxItems = 25;
+                const items = filtered.slice(0, maxItems);
+                countBadge.textContent = items.length + " / " + allEntities.length;
+                errorBox.style.display = "none";
+                list.innerHTML = "";
+
+                if (viewMode === "json") {
+                    const pre = document.createElement("pre");
+                    pre.style.fontSize = "0.75rem";
+                    pre.textContent = JSON.stringify(items, null, 2);
+                    list.appendChild(pre);
+                } else {
+                    for (const st of items) {
+                        const entityId = st.entity_id || "(unknown)";
+                        const domain = entityId.includes(".") ? entityId.split(".")[0] : "other";
+                        const state = st.state ?? "";
+
+                        const row = document.createElement("div");
+                        row.className = "entity-row";
+                        row.innerHTML =
+                            "<div class=\\"entity-id\\">" + entityId + "</div>" +
+                            "<div class=\\"entity-domain\\">" + domain + "</div>" +
+                            "<div class=\\"entity-state\\">" + state + "</div>";
+                        list.appendChild(row);
+                    }
+                }
+
+                if (viewMode === "json") {
+                    toggleBtn.textContent = "JSON";
+                    toggleBtn.classList.add("view-toggle-active");
+                } else {
+                    toggleBtn.textContent = "Compact";
+                    toggleBtn.classList.add("view-toggle-active");
+                }
+            }
+
+            async function loadEntities() {
+                const list = document.getElementById("entities-list");
+                const countBadge = document.getElementById("entities-count");
+                const errorBox = document.getElementById("entities-error");
+                if (!list || !countBadge || !errorBox) return;
+
+                try {
+                    const resp = await fetch("./api/entities", { method: "GET" });
+                    if (!resp.ok) {
+                        const text = await resp.text();
+                        countBadge.textContent = "error";
+                        errorBox.style.display = "block";
+                        errorBox.textContent = "Failed to load entities: " + resp.status + " " + text;
+                        list.innerHTML = "";
+                        return;
+                    }
+
+                    const data = await resp.json();
+                    if (!Array.isArray(data)) {
+                        countBadge.textContent = "0";
+                        errorBox.style.display = "block";
+                        errorBox.textContent = "Unexpected response format from Home Assistant API.";
+                        list.innerHTML = "";
+                        return;
+                    }
+
+                    allEntities = data;
+                    renderEntities();
+                } catch (err) {
+                    countBadge.textContent = "error";
+                    errorBox.style.display = "block";
+                    errorBox.textContent = "Exception while loading entities: " + err;
+                    list.innerHTML = "";
+                }
+            }
+
+            document.addEventListener("DOMContentLoaded", () => {
+                const domainSelect = document.getElementById("entities-domain");
+                const toggleBtn = document.getElementById("entities-view-toggle");
+
+                if (domainSelect) {
+                    domainSelect.addEventListener("change", () => renderEntities());
+                }
+
+                if (toggleBtn) {
+                    toggleBtn.addEventListener("click", () => {
+                        viewMode = viewMode === "compact" ? "json" : "compact";
+                        renderEntities();
+                    });
+                }
+
+                loadEntities();
+            });
+        </script>
     </body>
     </html>
     """;
@@ -363,6 +590,59 @@ app.MapGet("/", async context =>
 
 // Простейший health-check для интеграции с HA / отладки
 app.MapGet("/health", () => Results.Json(new { status = "ok", runtime = ".NET 8", source = "diploma-addon" }));
+
+// API-эндпоинт для чтения сущностей Home Assistant через Supervisor API
+// GET /api/entities -> проксирует запрос к /states и возвращает JSON как есть
+app.MapGet("/api/entities", async (IHttpClientFactory httpClientFactory) =>
+{
+    var client = httpClientFactory.CreateClient("hass");
+
+    // Если токен не был установлен, вернём понятную ошибку
+    if (client.DefaultRequestHeaders.Authorization is null)
+    {
+        return Results.Json(
+            new
+            {
+                error = "SUPERVISOR_TOKEN is not configured",
+                hint = "Ensure the addon has homeassistant_api/hassio_api enabled and runs under Supervisor."
+            },
+            statusCode: StatusCodes.Status500InternalServerError
+        );
+    }
+
+    try
+    {
+        using var response = await client.GetAsync("states");
+        var body = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return Results.Json(
+                new
+                {
+                    error = "Failed to query Home Assistant API",
+                    status = (int)response.StatusCode,
+                    body
+                },
+                statusCode: StatusCodes.Status502BadGateway
+            );
+        }
+
+        // Возвращаем "сырой" JSON от HA, не парся его на стороне аддона
+        return Results.Content(body, "application/json");
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(
+            new
+            {
+                error = "Exception while calling Home Assistant API",
+                message = ex.Message
+            },
+            statusCode: StatusCodes.Status500InternalServerError
+        );
+    }
+});
 
 // Явно привязываемся к порту 8080, который уже прокинут в addon config.yaml
 app.Run("http://0.0.0.0:8080");
