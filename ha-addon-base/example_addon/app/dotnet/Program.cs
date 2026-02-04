@@ -270,6 +270,13 @@ app.MapGet("/", async context =>
                 gap: 0.5rem;
                 margin-bottom: 0.4rem;
             }
+            .entities-controls {
+                display: flex;
+                align-items: center;
+                gap: 0.4rem;
+                flex-wrap: wrap;
+                justify-content: flex-end;
+            }
             .entities-badge {
                 font-size: 0.75rem;
                 padding: 0.1rem 0.5rem;
@@ -283,6 +290,28 @@ app.MapGet("/", async context =>
                 overflow: auto;
                 margin-top: 0.4rem;
                 padding-right: 0.15rem;
+            }
+            .entities-select {
+                background: rgba(15, 23, 42, 0.95);
+                border-radius: 999px;
+                border: 1px solid rgba(75, 85, 99, 0.9);
+                color: #e5e7eb;
+                font-size: 0.75rem;
+                padding: 0.2rem 0.6rem;
+            }
+            .view-toggle {
+                background: rgba(15, 23, 42, 0.95);
+                border-radius: 999px;
+                border: 1px solid rgba(55, 65, 81, 0.9);
+                color: #9ca3af;
+                font-size: 0.75rem;
+                padding: 0.15rem 0.6rem;
+                cursor: pointer;
+            }
+            .view-toggle-active {
+                color: #e5e7eb;
+                border-color: rgba(129, 140, 248, 0.9);
+                background: rgba(30, 64, 175, 0.5);
             }
             .entity-row {
                 display: grid;
@@ -422,7 +451,18 @@ app.MapGet("/", async context =>
                             <h2 style="margin:0; font-size:0.9rem; letter-spacing:0.03em; text-transform:uppercase; color:#9ca3af;">
                                 Home Assistant entities
                             </h2>
-                            <span id="entities-count" class="entities-badge">loading…</span>
+                            <div class="entities-controls">
+                                <select id="entities-domain" class="entities-select">
+                                    <option value="all">All domains</option>
+                                    <option value="light">light</option>
+                                    <option value="sensor">sensor</option>
+                                    <option value="switch">switch</option>
+                                    <option value="binary_sensor">binary_sensor</option>
+                                    <option value="climate">climate</option>
+                                </select>
+                                <button id="entities-view-toggle" type="button" class="view-toggle view-toggle-active">Compact</button>
+                                <span id="entities-count" class="entities-badge">loading…</span>
+                            </div>
                         </div>
                         <div id="entities-error" class="entities-error" style="display:none;"></div>
                         <div id="entities-list" class="entities-list">
@@ -433,6 +473,60 @@ app.MapGet("/", async context =>
             </section>
         </main>
         <script>
+            let allEntities = [];
+            let viewMode = "compact";
+
+            function renderEntities() {
+                const list = document.getElementById("entities-list");
+                const countBadge = document.getElementById("entities-count");
+                const errorBox = document.getElementById("entities-error");
+                const domainSelect = document.getElementById("entities-domain");
+                const toggleBtn = document.getElementById("entities-view-toggle");
+                if (!list || !countBadge || !errorBox || !domainSelect || !toggleBtn) return;
+
+                const selectedDomain = domainSelect.value || "all";
+                const filtered = allEntities.filter(st => {
+                    const entityId = st.entity_id || "";
+                    const domain = entityId.includes(".") ? entityId.split(".")[0] : "other";
+                    return selectedDomain === "all" || domain === selectedDomain;
+                });
+
+                const maxItems = 25;
+                const items = filtered.slice(0, maxItems);
+                countBadge.textContent = items.length + " / " + allEntities.length;
+                errorBox.style.display = "none";
+                list.innerHTML = "";
+
+                if (viewMode === "json") {
+                    const pre = document.createElement("pre");
+                    pre.style.fontSize = "0.75rem";
+                    pre.textContent = JSON.stringify(items, null, 2);
+                    list.appendChild(pre);
+                } else {
+                    for (const st of items) {
+                        const entityId = st.entity_id || "(unknown)";
+                        const domain = entityId.includes(".") ? entityId.split(".")[0] : "other";
+                        const state = st.state ?? "";
+
+                        const row = document.createElement("div");
+                        row.className = "entity-row";
+                        row.innerHTML =
+                            "<div class=\\"entity-id\\">" + entityId + "</div>" +
+                            "<div class=\\"entity-domain\\">" + domain + "</div>" +
+                            "<div class=\\"entity-state\\">" + state + "</div>";
+                        list.appendChild(row);
+                    }
+                }
+
+                if (viewMode === "json") {
+                    toggleBtn.textContent = "JSON";
+                    toggleBtn.classList.add("view-toggle-active");
+                } else {
+                    toggleBtn.textContent = "Compact";
+                    toggleBtn.classList.add("view-toggle-active");
+                }
+            }
+
             async function loadEntities() {
                 const list = document.getElementById("entities-list");
                 const countBadge = document.getElementById("entities-count");
@@ -459,25 +553,8 @@ app.MapGet("/", async context =>
                         return;
                     }
 
-                    const maxItems = 25;
-                    const items = data.slice(0, maxItems);
-                    countBadge.textContent = items.length + " / " + data.length;
-                    errorBox.style.display = "none";
-                    list.innerHTML = "";
-
-                    for (const st of items) {
-                        const entityId = st.entity_id || "(unknown)";
-                        const domain = entityId.includes(".") ? entityId.split(".")[0] : "other";
-                        const state = st.state ?? "";
-
-                        const row = document.createElement("div");
-                        row.className = "entity-row";
-                        row.innerHTML =
-                            "<div class=\\"entity-id\\">" + entityId + "</div>" +
-                            "<div class=\\"entity-domain\\">" + domain + "</div>" +
-                            "<div class=\\"entity-state\\">" + state + "</div>";
-                        list.appendChild(row);
-                    }
+                    allEntities = data;
+                    renderEntities();
                 } catch (err) {
                     countBadge.textContent = "error";
                     errorBox.style.display = "block";
@@ -486,7 +563,23 @@ app.MapGet("/", async context =>
                 }
             }
 
-            document.addEventListener("DOMContentLoaded", loadEntities);
+            document.addEventListener("DOMContentLoaded", () => {
+                const domainSelect = document.getElementById("entities-domain");
+                const toggleBtn = document.getElementById("entities-view-toggle");
+
+                if (domainSelect) {
+                    domainSelect.addEventListener("change", () => renderEntities());
+                }
+
+                if (toggleBtn) {
+                    toggleBtn.addEventListener("click", () => {
+                        viewMode = viewMode === "compact" ? "json" : "compact";
+                        renderEntities();
+                    });
+                }
+
+                loadEntities();
+            });
         </script>
     </body>
     </html>
