@@ -7,11 +7,17 @@ using Microsoft.Extensions.Hosting;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// HttpClient для общения с Home Assistant Supervisor API
+// HttpClient для общения с Home Assistant Supervisor API и REST API Home Assistant
 builder.Services.AddHttpClient("hass", client =>
 {
     var baseUrl = Environment.GetEnvironmentVariable("SUPERVISOR_API_URL")
-                  ?? "http://supervisor/core/api";
+                  ?? "http://supervisor/core/api/";
+
+    // Гарантируем завершающий слэш, чтобы относительные пути корректно конкатенировались (…/api/ + states)
+    if (!baseUrl.EndsWith("/"))
+    {
+        baseUrl += "/";
+    }
     var token = Environment.GetEnvironmentVariable("SUPERVISOR_TOKEN");
 
     client.BaseAddress = new Uri(baseUrl);
