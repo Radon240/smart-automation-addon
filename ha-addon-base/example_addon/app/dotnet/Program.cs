@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -448,6 +449,8 @@ app.MapGet("/", async context =>
                 }
             }
 
+            let entitiesSnapshot = { total: 0, limit: 0, items: [] };
+
             function renderEntities() {
                 const list = document.getElementById("entities-list");
                 const countBadge = document.getElementById("entities-count");
@@ -456,16 +459,10 @@ app.MapGet("/", async context =>
                 const toggleBtn = document.getElementById("entities-view-toggle");
                 if (!list || !countBadge || !errorBox || !domainSelect || !toggleBtn) return;
 
-                const selectedDomain = domainSelect.value || "all";
-                const filtered = allEntities.filter(st => {
-                    const entityId = st.entity_id || "";
-                    const domain = entityId.includes(".") ? entityId.split(".")[0] : "other";
-                    return selectedDomain === "all" || domain === selectedDomain;
-                });
+                const items = Array.isArray(entitiesSnapshot.items) ? entitiesSnapshot.items : [];
+                const total = typeof entitiesSnapshot.total === "number" ? entitiesSnapshot.total : items.length;
 
-                const maxItems = 25;
-                const items = filtered.slice(0, maxItems);
-                countBadge.textContent = items.length + " / " + allEntities.length;
+                countBadge.textContent = items.length + " / " + total;
                 errorBox.style.display = "none";
                 list.innerHTML = "";
 
@@ -477,7 +474,7 @@ app.MapGet("/", async context =>
                 } else {
                     for (const st of items) {
                         const entityId = st.entity_id || "(unknown)";
-                        const domain = entityId.includes(".") ? entityId.split(".")[0] : "other";
+                        const domain = st.domain || (entityId.includes(".") ? entityId.split(".")[0] : "other");
                         const state = st.state ?? "";
 
                         const row = document.createElement("div");
@@ -503,10 +500,18 @@ app.MapGet("/", async context =>
                 const list = document.getElementById("entities-list");
                 const countBadge = document.getElementById("entities-count");
                 const errorBox = document.getElementById("entities-error");
-                if (!list || !countBadge || !errorBox) return;
+                const domainSelect = document.getElementById("entities-domain");
+                if (!list || !countBadge || !errorBox || !domainSelect) return;
 
                 try {
-                    const resp = await fetch("./api/entities", { method: "GET" });
+                    const params = new URLSearchParams();
+                    const selectedDomain = domainSelect.value || "all";
+                    if (selectedDomain && selectedDomain !== "all") {
+                        params.set("domain", selectedDomain);
+                    }
+                    params.set("limit", "50");
+
+                    const resp = await fetch("./api/entities?" + params.toString(), { method: "GET" });
                     if (!resp.ok) {
                         const text = await resp.text();
                         countBadge.textContent = "error";
@@ -517,7 +522,7 @@ app.MapGet("/", async context =>
                     }
 
                     const data = await resp.json();
-                    if (!Array.isArray(data)) {
+                    if (!data || !Array.isArray(data.items)) {
                         countBadge.textContent = "0";
                         errorBox.style.display = "block";
                         errorBox.textContent = "Unexpected response format from Home Assistant API.";
@@ -525,7 +530,7 @@ app.MapGet("/", async context =>
                         return;
                     }
 
-                    allEntities = data;
+                    entitiesSnapshot = data;
                     renderEntities();
                 } catch (err) {
                     countBadge.textContent = "error";
@@ -565,8 +570,8 @@ app.MapGet("/", async context =>
 app.MapGet("/health", () => Results.Json(new { status = "ok", runtime = ".NET 8", source = "diploma-addon" }));
 
 // API-эндпоинт для чтения сущностей Home Assistant через Supervisor API
-// GET /api/entities -> проксирует запрос к /states и возвращает JSON как есть
-app.MapGet("/api/entities", async (IHttpClientFactory httpClientFactory) =>
+// GET /api/entities?domain=light&limit=50 -> возвращает сжатый список сущностей
+app.MapGet("/api/entities", async (IHttpClientFactory httpClientFactory, string? domain, int? limit) =>
 {
     var client = httpClientFactory.CreateClient("hass");
 
@@ -601,8 +606,78 @@ app.MapGet("/api/entities", async (IHttpClientFactory httpClientFactory) =>
             );
         }
 
-        // Возвращаем "сырой" JSON от HA, не парся его на стороне аддона
-        return Results.Content(body, "application/json");
+        using var doc = JsonDocument.Parse(body);
+        var raw = new List<(string EntityId, string? State, string Domain, string? FriendlyName)>();
+
+        foreach (var element in doc.RootElement.EnumerateArray())
+        {
+            if (!element.TryGetProperty("entity_id", out var entityIdProp) ||
+                entityIdProp.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var entityId = entityIdProp.GetString() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(entityId))
+            {
+                continue;
+            }
+
+            var dotIndex = entityId.IndexOf('.');
+            var entityDomain = dotIndex > 0 ? entityId[..dotIndex] : "other";
+
+            string? state = null;
+            if (element.TryGetProperty("state", out var stateProp) &&
+                stateProp.ValueKind == JsonValueKind.String)
+            {
+                state = stateProp.GetString();
+            }
+
+            string? friendlyName = null;
+            if (element.TryGetProperty("attributes", out var attrsProp) &&
+                attrsProp.ValueKind == JsonValueKind.Object &&
+                attrsProp.TryGetProperty("friendly_name", out var fnProp) &&
+                fnProp.ValueKind == JsonValueKind.String)
+            {
+                friendlyName = fnProp.GetString();
+            }
+
+            raw.Add((entityId, state, entityDomain, friendlyName));
+        }
+
+        // Фильтрация по домену (если указан)
+        IEnumerable<(string EntityId, string? State, string Domain, string? FriendlyName)> filtered = raw;
+        if (!string.IsNullOrWhiteSpace(domain) && !string.Equals(domain, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            filtered = filtered.Where(e => string.Equals(e.Domain, domain, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var filteredList = filtered.ToList();
+        var total = filteredList.Count;
+
+        var effectiveLimit = limit.HasValue && limit.Value > 0
+            ? Math.Min(limit.Value, 200)
+            : 50;
+
+        var limitedItems = filteredList
+            .OrderBy(e => e.Domain)
+            .ThenBy(e => e.EntityId)
+            .Take(effectiveLimit)
+            .Select(e => new
+            {
+                entity_id = e.EntityId,
+                state = e.State,
+                domain = e.Domain,
+                friendly_name = e.FriendlyName
+            })
+            .ToList();
+
+        return Results.Json(new
+        {
+            total,
+            limit = effectiveLimit,
+            items = limitedItems
+        });
     }
     catch (Exception ex)
     {
