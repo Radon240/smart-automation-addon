@@ -1,8 +1,24 @@
+using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// HttpClient для общения с Home Assistant Supervisor API
+builder.Services.AddHttpClient("hass", client =>
+{
+    var baseUrl = Environment.GetEnvironmentVariable("SUPERVISOR_API_URL")
+                  ?? "http://supervisor/core/api";
+    var token = Environment.GetEnvironmentVariable("SUPERVISOR_TOKEN");
+
+    client.BaseAddress = new Uri(baseUrl);
+    if (!string.IsNullOrWhiteSpace(token))
+    {
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+    }
+});
 
 var app = builder.Build();
 
@@ -363,6 +379,59 @@ app.MapGet("/", async context =>
 
 // Простейший health-check для интеграции с HA / отладки
 app.MapGet("/health", () => Results.Json(new { status = "ok", runtime = ".NET 8", source = "diploma-addon" }));
+
+// API-эндпоинт для чтения сущностей Home Assistant через Supervisor API
+// GET /api/entities -> проксирует запрос к /states и возвращает JSON как есть
+app.MapGet("/api/entities", async (IHttpClientFactory httpClientFactory) =>
+{
+    var client = httpClientFactory.CreateClient("hass");
+
+    // Если токен не был установлен, вернём понятную ошибку
+    if (client.DefaultRequestHeaders.Authorization is null)
+    {
+        return Results.Json(
+            new
+            {
+                error = "SUPERVISOR_TOKEN is not configured",
+                hint = "Ensure the addon has homeassistant_api/hassio_api enabled and runs under Supervisor."
+            },
+            statusCode: StatusCodes.Status500InternalServerError
+        );
+    }
+
+    try
+    {
+        using var response = await client.GetAsync("states");
+        var body = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return Results.Json(
+                new
+                {
+                    error = "Failed to query Home Assistant API",
+                    status = (int)response.StatusCode,
+                    body
+                },
+                statusCode: StatusCodes.Status502BadGateway
+            );
+        }
+
+        // Возвращаем "сырой" JSON от HA, не парся его на стороне аддона
+        return Results.Content(body, "application/json");
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(
+            new
+            {
+                error = "Exception while calling Home Assistant API",
+                message = ex.Message
+            },
+            statusCode: StatusCodes.Status500InternalServerError
+        );
+    }
+});
 
 // Явно привязываемся к порту 8080, который уже прокинут в addon config.yaml
 app.Run("http://0.0.0.0:8080");
