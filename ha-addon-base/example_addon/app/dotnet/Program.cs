@@ -113,7 +113,7 @@ app.MapGet("/", async context =>
             }
             .body {
                 display: grid;
-                grid-template-columns: minmax(0, 3fr) minmax(0, 2.2fr);
+                grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.8fr);
                 gap: 1.25rem;
                 padding: 1.4rem 1.5rem 1.5rem;
             }
@@ -244,25 +244,6 @@ app.MapGet("/", async context =>
                 padding: 0.7rem 0.8rem;
                 font-size: 0.78rem;
             }
-            .timeline-item {
-                display: flex;
-                gap: 0.65rem;
-                padding: 0.3rem 0;
-            }
-            .timeline-time {
-                width: 3.4rem;
-                color: #6b7280;
-            }
-            .timeline-body {
-                flex: 1;
-            }
-            .timeline-title {
-                color: #e5e7eb;
-                margin-bottom: 0.1rem;
-            }
-            .timeline-meta {
-                color: #9ca3af;
-            }
             .entities-header {
                 display: flex;
                 justify-content: space-between;
@@ -367,90 +348,33 @@ app.MapGet("/", async context =>
             </header>
             <section class="body">
                 <section class="card">
-                    <h2>Overview</h2>
+                    <h2>Addon state</h2>
                     <div class="hero-title">
-                        Adaptive <span class="hero-accent">suggestions</span> for your everyday routines
+                        Runtime and health
                     </div>
                     <p class="hero-text">
-                        This .NET service runs inside a Home Assistant addon and will later connect to
-                        Python models to analyse event history and detect user habits. For now, this
-                        page is a static prototype UI to validate the integration and layout.
+                        This block reflects the current state of the addon runtime and basic configuration.
+                        In the future it can include model status, last analysis timestamps and diagnostic
+                        information useful for debugging automations.
                     </p>
                     <div class="chips">
-                        <span class="chip">Home Assistant ingress</span>
-                        <span class="chip">.NET 8 minimal API</span>
+                        <span class="chip">.NET 8</span>
+                        <span class="chip">Home Assistant Supervisor API</span>
                         <span class="chip">Python models (planned)</span>
-                        <span class="chip">Habit mining</span>
                     </div>
-                    <button class="primary-button" type="button">
-                        <span>⟳</span>
-                        <span>Simulate pattern scan</span>
-                    </button>
-                    <span class="secondary-info">
-                        In the next step this will trigger a real analysis of Home Assistant events.
-                    </span>
+                    <div class="timeline" id="addon-health">
+                        <div style="font-size:0.8rem; color:#6b7280;">
+                            Loading addon health from <code>/health</code>…
+                        </div>
+                    </div>
                 </section>
                 <section class="card right-card">
-                    <h2>Prototype status</h2>
-                    <div class="metric-row">
-                        <div class="metric-label">
-                            <span class="metric-dot"></span>
-                            <span>.NET web shell</span>
-                        </div>
-                        <span class="metric-value">Running</span>
-                    </div>
-                    <div class="metric-row">
-                        <div class="metric-label">
-                            <span class="metric-dot" style="background:#22c55e;"></span>
-                            <span>Addon ingress</span>
-                        </div>
-                        <span class="metric-value">Configured</span>
-                    </div>
-                    <div class="metric-row">
-                        <div class="metric-label">
-                            <span class="metric-dot" style="background:#f59e0b;"></span>
-                            <span>Python models</span>
-                        </div>
-                        <span class="metric-value">Planned</span>
-                    </div>
-                    <div class="timeline">
-                        <div class="timeline-item">
-                            <div class="timeline-time">Step 1</div>
-                            <div class="timeline-body">
-                                <div class="timeline-title">Base .NET addon UI</div>
-                                <div class="timeline-meta">You are here — container + minimal web UI.</div>
-                            </div>
-                        </div>
-                        <div class="timeline-item">
-                            <div class="timeline-time">Step 2</div>
-                            <div class="timeline-body">
-                                <div class="timeline-title">Connect to HA events</div>
-                                <div class="timeline-meta">Use Supervisor API to read history &amp; state.</div>
-                            </div>
-                        </div>
-                        <div class="timeline-item">
-                            <div class="timeline-time">Step 3</div>
-                            <div class="timeline-body">
-                                <div class="timeline-title">Python habit model</div>
-                                <div class="timeline-meta">Delegate pattern mining to Python services.</div>
-                            </div>
-                        </div>
-                        <div class="timeline-item">
-                            <div class="timeline-time">Step 4</div>
-                            <div class="timeline-body">
-                                <div class="timeline-title">Automation suggestions</div>
-                                <div class="timeline-meta">Render concrete Home Assistant automations and let the user approve them.</div>
-                            </div>
-                        </div>
-                    </div>
-                    <p style="margin-top:0.8rem; font-size:0.78rem; color:#9ca3af;">
-                        Health endpoint: <code>/health</code> (JSON). Use it from Home Assistant or scripts to confirm that the addon is online.
-                    </p>
+                    <h2>Home Assistant entities</h2>
                     <div class="card entities-card">
                         <div class="entities-header">
-                            <h2 style="margin:0; font-size:0.9rem; letter-spacing:0.03em; text-transform:uppercase; color:#9ca3af;">
-                                Home Assistant entities
-                            </h2>
+                            <h3 style="margin:0; font-size:0.85rem; letter-spacing:0.03em; text-transform:uppercase; color:#9ca3af;">
+                                Entities snapshot
+                            </h3>
                             <div class="entities-controls">
                                 <select id="entities-domain" class="entities-select">
                                     <option value="all">All domains</option>
@@ -475,6 +399,54 @@ app.MapGet("/", async context =>
         <script>
             let allEntities = [];
             let viewMode = "compact";
+
+            async function loadAddonHealth() {
+                const container = document.getElementById("addon-health");
+                if (!container) return;
+
+                try {
+                    const resp = await fetch("./health", { method: "GET" });
+                    if (!resp.ok) {
+                        container.innerHTML = "<div style='font-size:0.8rem; color:#fecaca;'>Failed to load health: " +
+                            resp.status + " " + resp.statusText + "</div>";
+                        return;
+                    }
+
+                    const data = await resp.json();
+                    container.innerHTML = "";
+
+                    const grid = document.createElement("div");
+                    grid.style.display = "grid";
+                    grid.style.gridTemplateColumns = "minmax(0, 1.1fr) minmax(0, 1.2fr)";
+                    grid.style.gap = "0.4rem 0.8rem";
+
+                    const items = [
+                        ["status", data.status ?? "unknown"],
+                        ["runtime", data.runtime ?? "(none)"],
+                        ["source", data.source ?? "(unknown)"],
+                    ];
+
+                    for (const [label, value] of items) {
+                        const k = document.createElement("div");
+                        k.style.color = "#9ca3af";
+                        k.style.fontSize = "0.78rem";
+                        k.textContent = label;
+
+                        const v = document.createElement("div");
+                        v.style.color = "#e5e7eb";
+                        v.style.fontSize = "0.85rem";
+                        v.textContent = String(value);
+
+                        grid.appendChild(k);
+                        grid.appendChild(v);
+                    }
+
+                    container.appendChild(grid);
+                } catch (err) {
+                    container.innerHTML = "<div style='font-size:0.8rem; color:#fecaca;'>Exception while loading health: " +
+                        err + "</div>";
+                }
+            }
 
             function renderEntities() {
                 const list = document.getElementById("entities-list");
@@ -578,6 +550,7 @@ app.MapGet("/", async context =>
                     });
                 }
 
+                loadAddonHealth();
                 loadEntities();
             });
         </script>
