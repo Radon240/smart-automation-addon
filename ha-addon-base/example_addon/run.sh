@@ -1,2 +1,4 @@
 #!/usr/bin/with-contenv bashio
-python3 /app/main.py
+
+echo "[diploma_addon] Starting .NET web application..."
+dotnet /app/dotnet_out/DiplomaAddon.dll
