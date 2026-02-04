@@ -209,6 +209,10 @@ app.MapGet("/", async context =>
             .right-card {
                 background: radial-gradient(circle at top right, rgba(56, 189, 248, 0.18), rgba(15, 23, 42, 0.96));
             }
+            .entities-card {
+                margin-top: 1rem;
+                background: radial-gradient(circle at top, rgba(34, 197, 94, 0.14), rgba(15, 23, 42, 0.96));
+            }
             .metric-row {
                 display: flex;
                 justify-content: space-between;
@@ -258,6 +262,52 @@ app.MapGet("/", async context =>
             }
             .timeline-meta {
                 color: #9ca3af;
+            }
+            .entities-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 0.5rem;
+                margin-bottom: 0.4rem;
+            }
+            .entities-badge {
+                font-size: 0.75rem;
+                padding: 0.1rem 0.5rem;
+                border-radius: 999px;
+                border: 1px solid rgba(52, 211, 153, 0.7);
+                color: #bbf7d0;
+                background: rgba(6, 78, 59, 0.35);
+            }
+            .entities-list {
+                max-height: 240px;
+                overflow: auto;
+                margin-top: 0.4rem;
+                padding-right: 0.15rem;
+            }
+            .entity-row {
+                display: grid;
+                grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr);
+                gap: 0.4rem;
+                padding: 0.3rem 0.15rem;
+                border-bottom: 1px solid rgba(31, 41, 55, 0.9);
+                font-size: 0.78rem;
+            }
+            .entity-row:last-child {
+                border-bottom: none;
+            }
+            .entity-id {
+                color: #e5e7eb;
+                word-break: break-all;
+            }
+            .entity-domain {
+                color: #a5b4fc;
+            }
+            .entity-state {
+                color: #fde68a;
+            }
+            .entities-error {
+                font-size: 0.8rem;
+                color: #fecaca;
             }
             code {
                 font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
@@ -367,9 +417,77 @@ app.MapGet("/", async context =>
                     <p style="margin-top:0.8rem; font-size:0.78rem; color:#9ca3af;">
                         Health endpoint: <code>/health</code> (JSON). Use it from Home Assistant or scripts to confirm that the addon is online.
                     </p>
+                    <div class="card entities-card">
+                        <div class="entities-header">
+                            <h2 style="margin:0; font-size:0.9rem; letter-spacing:0.03em; text-transform:uppercase; color:#9ca3af;">
+                                Home Assistant entities
+                            </h2>
+                            <span id="entities-count" class="entities-badge">loading…</span>
+                        </div>
+                        <div id="entities-error" class="entities-error" style="display:none;"></div>
+                        <div id="entities-list" class="entities-list">
+                            <div style="font-size:0.8rem; color:#6b7280;">Loading entities from Home Assistant API…</div>
+                        </div>
+                    </div>
                 </section>
             </section>
         </main>
+        <script>
+            async function loadEntities() {
+                const list = document.getElementById("entities-list");
+                const countBadge = document.getElementById("entities-count");
+                const errorBox = document.getElementById("entities-error");
+                if (!list || !countBadge || !errorBox) return;
+
+                try {
+                    const resp = await fetch("./api/entities", { method: "GET" });
+                    if (!resp.ok) {
+                        const text = await resp.text();
+                        countBadge.textContent = "error";
+                        errorBox.style.display = "block";
+                        errorBox.textContent = "Failed to load entities: " + resp.status + " " + text;
+                        list.innerHTML = "";
+                        return;
+                    }
+
+                    const data = await resp.json();
+                    if (!Array.isArray(data)) {
+                        countBadge.textContent = "0";
+                        errorBox.style.display = "block";
+                        errorBox.textContent = "Unexpected response format from Home Assistant API.";
+                        list.innerHTML = "";
+                        return;
+                    }
+
+                    const maxItems = 25;
+                    const items = data.slice(0, maxItems);
+                    countBadge.textContent = items.length + " / " + data.length;
+                    errorBox.style.display = "none";
+                    list.innerHTML = "";
+
+                    for (const st of items) {
+                        const entityId = st.entity_id || "(unknown)";
+                        const domain = entityId.includes(".") ? entityId.split(".")[0] : "other";
+                        const state = st.state ?? "";
+
+                        const row = document.createElement("div");
+                        row.className = "entity-row";
+                        row.innerHTML =
+                            "<div class=\\"entity-id\\">" + entityId + "</div>" +
+                            "<div class=\\"entity-domain\\">" + domain + "</div>" +
+                            "<div class=\\"entity-state\\">" + state + "</div>";
+                        list.appendChild(row);
+                    }
+                } catch (err) {
+                    countBadge.textContent = "error";
+                    errorBox.style.display = "block";
+                    errorBox.textContent = "Exception while loading entities: " + err;
+                    list.innerHTML = "";
+                }
+            }
+
+            document.addEventListener("DOMContentLoaded", loadEntities);
+        </script>
     </body>
     </html>
     """;
