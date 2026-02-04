@@ -252,13 +252,6 @@ app.MapGet("/", async context =>
                 gap: 0.5rem;
                 margin-bottom: 0.4rem;
             }
-            .entities-controls {
-                display: flex;
-                align-items: center;
-                gap: 0.4rem;
-                flex-wrap: wrap;
-                justify-content: flex-end;
-            }
             .entities-badge {
                 font-size: 0.75rem;
                 padding: 0.1rem 0.5rem;
@@ -273,27 +266,14 @@ app.MapGet("/", async context =>
                 margin-top: 0.4rem;
                 padding-right: 0.15rem;
             }
-            .entities-select {
-                background: rgba(15, 23, 42, 0.95);
-                border-radius: 999px;
-                border: 1px solid rgba(75, 85, 99, 0.9);
-                color: #e5e7eb;
-                font-size: 0.75rem;
-                padding: 0.2rem 0.6rem;
-            }
-            .view-toggle {
+            .entities-button {
                 background: rgba(15, 23, 42, 0.95);
                 border-radius: 999px;
                 border: 1px solid rgba(55, 65, 81, 0.9);
-                color: #9ca3af;
-                font-size: 0.75rem;
-                padding: 0.15rem 0.6rem;
-                cursor: pointer;
-            }
-            .view-toggle-active {
                 color: #e5e7eb;
-                border-color: rgba(129, 140, 248, 0.9);
-                background: rgba(30, 64, 175, 0.5);
+                font-size: 0.78rem;
+                padding: 0.3rem 0.9rem;
+                cursor: pointer;
             }
             .entity-row {
                 display: grid;
@@ -376,31 +356,20 @@ app.MapGet("/", async context =>
                             <h3 style="margin:0; font-size:0.85rem; letter-spacing:0.03em; text-transform:uppercase; color:#9ca3af;">
                                 Entities snapshot
                             </h3>
-                            <div class="entities-controls">
-                                <select id="entities-domain" class="entities-select">
-                                    <option value="all">All domains</option>
-                                    <option value="light">light</option>
-                                    <option value="sensor">sensor</option>
-                                    <option value="switch">switch</option>
-                                    <option value="binary_sensor">binary_sensor</option>
-                                    <option value="climate">climate</option>
-                                </select>
-                                <button id="entities-view-toggle" type="button" class="view-toggle view-toggle-active">Compact</button>
-                                <span id="entities-count" class="entities-badge">loading…</span>
+                            <div style="display:flex; align-items:center; gap:0.5rem;">
+                                <button id="entities-load-button" type="button" class="entities-button">Отобразить сущности</button>
+                                <span id="entities-count" class="entities-badge">idle</span>
                             </div>
                         </div>
                         <div id="entities-error" class="entities-error" style="display:none;"></div>
                         <div id="entities-list" class="entities-list">
-                            <div style="font-size:0.8rem; color:#6b7280;">Loading entities from Home Assistant API…</div>
+                            <div style="font-size:0.8rem; color:#6b7280;">Нажмите &laquo;Отобразить сущности&raquo;, чтобы загрузить данные из Home Assistant.</div>
                         </div>
                     </div>
                 </section>
             </section>
         </main>
         <script>
-            let allEntities = [];
-            let viewMode = "compact";
-
             async function loadAddonHealth() {
                 const container = document.getElementById("addon-health");
                 if (!container) return;
@@ -455,9 +424,7 @@ app.MapGet("/", async context =>
                 const list = document.getElementById("entities-list");
                 const countBadge = document.getElementById("entities-count");
                 const errorBox = document.getElementById("entities-error");
-                const domainSelect = document.getElementById("entities-domain");
-                const toggleBtn = document.getElementById("entities-view-toggle");
-                if (!list || !countBadge || !errorBox || !domainSelect || !toggleBtn) return;
+                if (!list || !countBadge || !errorBox) return;
 
                 const items = Array.isArray(entitiesSnapshot.items) ? entitiesSnapshot.items : [];
                 const total = typeof entitiesSnapshot.total === "number" ? entitiesSnapshot.total : items.length;
@@ -466,33 +433,18 @@ app.MapGet("/", async context =>
                 errorBox.style.display = "none";
                 list.innerHTML = "";
 
-                if (viewMode === "json") {
-                    const pre = document.createElement("pre");
-                    pre.style.fontSize = "0.75rem";
-                    pre.textContent = JSON.stringify(items, null, 2);
-                    list.appendChild(pre);
-                } else {
-                    for (const st of items) {
-                        const entityId = st.entity_id || "(unknown)";
-                        const domain = st.domain || (entityId.includes(".") ? entityId.split(".")[0] : "other");
-                        const state = st.state ?? "";
+                for (const st of items) {
+                    const entityId = st.entity_id || "(unknown)";
+                    const domain = st.domain || (entityId.includes(".") ? entityId.split(".")[0] : "other");
+                    const state = st.state ?? "";
 
-                        const row = document.createElement("div");
-                        row.className = "entity-row";
-                        row.innerHTML =
-                            "<div class=\\"entity-id\\">" + entityId + "</div>" +
-                            "<div class=\\"entity-domain\\">" + domain + "</div>" +
-                            "<div class=\\"entity-state\\">" + state + "</div>";
-                        list.appendChild(row);
-                    }
-                }
-
-                if (viewMode === "json") {
-                    toggleBtn.textContent = "JSON";
-                    toggleBtn.classList.add("view-toggle-active");
-                } else {
-                    toggleBtn.textContent = "Compact";
-                    toggleBtn.classList.add("view-toggle-active");
+                    const row = document.createElement("div");
+                    row.className = "entity-row";
+                    row.innerHTML =
+                        "<div class=\\"entity-id\\">" + entityId + "</div>" +
+                        "<div class=\\"entity-domain\\">" + domain + "</div>" +
+                        "<div class=\\"entity-state\\">" + state + "</div>";
+                    list.appendChild(row);
                 }
             }
 
@@ -500,16 +452,11 @@ app.MapGet("/", async context =>
                 const list = document.getElementById("entities-list");
                 const countBadge = document.getElementById("entities-count");
                 const errorBox = document.getElementById("entities-error");
-                const domainSelect = document.getElementById("entities-domain");
-                if (!list || !countBadge || !errorBox || !domainSelect) return;
+                if (!list || !countBadge || !errorBox) return;
 
                 try {
                     const params = new URLSearchParams();
-                    const selectedDomain = domainSelect.value || "all";
-                    if (selectedDomain && selectedDomain !== "all") {
-                        params.set("domain", selectedDomain);
-                    }
-                    params.set("limit", "50");
+                    params.set("limit", "1000");
 
                     const resp = await fetch("./api/entities?" + params.toString(), { method: "GET" });
                     if (!resp.ok) {
@@ -541,22 +488,15 @@ app.MapGet("/", async context =>
             }
 
             document.addEventListener("DOMContentLoaded", () => {
-                const domainSelect = document.getElementById("entities-domain");
-                const toggleBtn = document.getElementById("entities-view-toggle");
+                const loadButton = document.getElementById("entities-load-button");
 
-                if (domainSelect) {
-                    domainSelect.addEventListener("change", () => renderEntities());
-                }
-
-                if (toggleBtn) {
-                    toggleBtn.addEventListener("click", () => {
-                        viewMode = viewMode === "compact" ? "json" : "compact";
-                        renderEntities();
-                    });
+                if (loadButton) {
+                    loadButton.addEventListener("click", () => loadEntities());
                 }
 
                 loadAddonHealth();
-                loadEntities();
+                // автообновление состояния аддона раз в минуту
+                setInterval(loadAddonHealth, 60000);
             });
         </script>
     </body>
