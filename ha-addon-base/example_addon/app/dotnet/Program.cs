@@ -447,9 +447,9 @@ app.MapGet("/", async context =>
                     const row = document.createElement("div");
                     row.className = "entity-row";
                     row.innerHTML =
-                        "<div class=\\"entity-id\\">" + entityId + "</div>" +
-                        "<div class=\\"entity-domain\\">" + domain + "</div>" +
-                        "<div class=\\"entity-state\\">" + state + "</div>";
+                        '<div class="entity-id">' + entityId + '</div>' +
+                        '<div class="entity-domain">' + domain + '</div>' +
+                        '<div class="entity-state">' + state + '</div>';
                     list.appendChild(row);
                 }
             }
@@ -464,7 +464,7 @@ app.MapGet("/", async context =>
                     const params = new URLSearchParams();
                     params.set("limit", "1000");
 
-                    const resp = await fetch("./api/entities?" + params.toString(), { method: "GET" });
+                    const resp = await fetch("./api/states?" + params.toString(), { method: "GET" });
                     if (!resp.ok) {
                         const text = await resp.text();
                         countBadge.textContent = "error";
@@ -516,8 +516,9 @@ app.MapGet("/", async context =>
 app.MapGet("/health", () => Results.Json(new { status = "ok", runtime = ".NET 8", source = "diploma-addon" }));
 
 // API-эндпоинт для чтения сущностей Home Assistant через Supervisor API
-// GET /api/entities?domain=light&limit=50 -> возвращает сжатый список сущностей
-app.MapGet("/api/entities", async (IHttpClientFactory httpClientFactory, string? domain, int? limit) =>
+// Логически соответствует /api/states из REST API Home Assistant, но возвращает сжатый список состояний
+// GET /api/states?domain=light&limit=50
+app.MapGet("/api/states", async (IHttpClientFactory httpClientFactory, string? domain, int? limit) =>
 {
     var client = httpClientFactory.CreateClient("hass");
 
