@@ -1,0 +1,7 @@
+{
+  "log_level": "info",
+  "min_support": 5,
+  "min_confidence": 0.6,
+  "history_days": 7,
+  "train_hour": 3
+}

@@ -9,18 +9,19 @@ import requests
 import aiohttp
 
 from ml_model import TimeSlotHabitModel, events_from_ha_states
+from config import get_config
 
 
 SUPERVISOR_TOKEN = os.getenv("SUPERVISOR_TOKEN")
 SUPERVISOR_WS_URL = "ws://supervisor/core/websocket"
 SUPERVISOR_API_URL = "http://supervisor/core/api"
 
-# Model configuration from Home Assistant addon config.yaml
-# These are passed as environment variables by the HA supervisor
-MODEL_MIN_SUPPORT = int(os.getenv("MIN_SUPPORT", "5"))
-MODEL_MIN_CONFIDENCE = float(os.getenv("MIN_CONFIDENCE", "0.6"))
-HISTORY_DAYS = int(os.getenv("HISTORY_DAYS", "7"))
-TRAIN_HOUR = int(os.getenv("TRAIN_HOUR", "3"))
+# Load configuration from file (/data/options.json) or environment
+cfg = get_config()
+MODEL_MIN_SUPPORT = cfg.get("min_support")
+MODEL_MIN_CONFIDENCE = cfg.get("min_confidence")
+HISTORY_DAYS = cfg.get("history_days")
+TRAIN_HOUR = cfg.get("train_hour")
 
 app = Flask(__name__)
 
@@ -122,7 +123,7 @@ def health():
 
 
 @app.route("/api/config", methods=["GET"])
-def get_config():
+def get_config_endpoint():
     """Return current model configuration."""
     return jsonify({
         "min_support": MODEL_MIN_SUPPORT,
@@ -133,6 +134,42 @@ def get_config():
         "training_in_progress": training_in_progress,
         "last_training_samples": last_training_samples
     }), 200
+
+
+@app.route("/api/config/reload", methods=["POST"])
+def reload_config():
+    """Reload configuration from /data/options.json."""
+    global MODEL_MIN_SUPPORT, MODEL_MIN_CONFIDENCE, HISTORY_DAYS, TRAIN_HOUR, ml_model
+    try:
+        cfg.reload()
+        MODEL_MIN_SUPPORT = cfg.get("min_support")
+        MODEL_MIN_CONFIDENCE = cfg.get("min_confidence")
+        HISTORY_DAYS = cfg.get("history_days")
+        TRAIN_HOUR = cfg.get("train_hour")
+        
+        # Recreate model with new parameters
+        ml_model = TimeSlotHabitModel(
+            min_support=MODEL_MIN_SUPPORT,
+            min_confidence=MODEL_MIN_CONFIDENCE
+        )
+        
+        print(f"[diploma_addon] Config reloaded: min_support={MODEL_MIN_SUPPORT}, min_confidence={MODEL_MIN_CONFIDENCE}, history_days={HISTORY_DAYS}, train_hour={TRAIN_HOUR}")
+        
+        return jsonify({
+            "status": "ok",
+            "message": "Configuration reloaded successfully",
+            "config": {
+                "min_support": MODEL_MIN_SUPPORT,
+                "min_confidence": MODEL_MIN_CONFIDENCE,
+                "history_days": HISTORY_DAYS,
+                "train_hour": TRAIN_HOUR,
+            }
+        }), 200
+    except Exception as e:
+        print(f"[diploma_addon] Config reload error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/api/predictions", methods=["POST"])
