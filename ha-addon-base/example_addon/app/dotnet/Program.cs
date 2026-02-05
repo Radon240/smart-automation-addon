@@ -421,57 +421,75 @@ app.MapGet("/", async context =>
                 </div>
             </header>
             <section class="body" style="display:block; padding:1.4rem 1.5rem;">
+                <!-- Automation Suggestions Card -->
                 <section class="card predictions-card" style="max-width:100%;">
-                    <h2 style="margin-top:0;">ML Predictions</h2>
+                    <h2 style="margin-top:0;">💡 Automation Suggestions</h2>
                     <div style="margin-bottom:1rem; font-size:0.85rem; color:#9ca3af;">
-                        Предсказание вероятных действий на основе анализа истории домашней автоматизации (последние 7 дней)
+                        Рекомендации по автоматизации на основе анализа паттернов поведения (корреляции и временные закономерности)
                     </div>
                     
-                    <div style="display:flex; gap:0.5rem; margin-bottom:1rem;">
-                        <button id="predictions-load-button" type="button" class="entities-button">🔄 Обновить сейчас</button>
-                        <button id="predictions-history-button" type="button" class="entities-button">📊 История (7 дней)</button>
-                        <button id="predictions-train-button" type="button" class="entities-button">🚀 Train now</button>
+                    <div style="display:flex; gap:0.5rem; margin-bottom:1rem; flex-wrap:wrap;">
+                        <button id="suggestions-load-button" type="button" class="entities-button">🔄 Обновить</button>
+                        <button id="suggestions-train-button" type="button" class="primary-button">🚀 Анализировать историю</button>
+                        <button id="suggestions-patterns-button" type="button" class="entities-button">📊 Показать паттерны</button>
                     </div>
                     
                     <div class="predictions-header" style="margin-bottom:1rem; padding:0.75rem; background:rgba(15,23,42,0.5); border-radius:0.5rem; border:1px solid rgba(55,65,81,0.5);">
-                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:0.75rem; font-size:0.75rem;">
+                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:0.75rem; font-size:0.75rem;">
                             <div>
-                                <div style="color:#9ca3af; margin-bottom:0.2rem;">Статус обновления</div>
-                                <div id="predictions-status" style="color:#e5e7eb; font-weight:600;">Загрузка...</div>
+                                <div style="color:#9ca3af; margin-bottom:0.2rem;">Статус анализа</div>
+                                <div id="suggestions-status" style="color:#e5e7eb; font-weight:600;">Загрузка...</div>
                             </div>
                             <div>
-                                <div style="color:#9ca3af; margin-bottom:0.2rem;">Образцы обучения</div>
-                                <div id="predictions-training" style="color:#e5e7eb; font-weight:600;">-</div>
+                                <div style="color:#9ca3af; margin-bottom:0.2rem;">Образцов обработано</div>
+                                <div id="suggestions-samples" style="color:#e5e7eb; font-weight:600;">-</div>
                             </div>
                             <div>
-                                <div style="color:#9ca3af; margin-bottom:0.2rem;">Предсказаний</div>
-                                <div id="predictions-count" style="color:#e5e7eb; font-weight:600;">-</div>
+                                <div style="color:#9ca3af; margin-bottom:0.2rem;">Найдено предложений</div>
+                                <div id="suggestions-count" style="color:#e5e7eb; font-weight:600;">-</div>
                             </div>
                             <div>
-                                <div style="color:#9ca3af; margin-bottom:0.2rem;">Источник данных</div>
-                                <div id="predictions-source" style="color:#e5e7eb; font-weight:600;">-</div>
+                                <div style="color:#9ca3af; margin-bottom:0.2rem;">Уникальных сущностей</div>
+                                <div id="suggestions-entities" style="color:#e5e7eb; font-weight:600;">-</div>
                             </div>
                         </div>
                     </div>
                     
-                    <div style="display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,0.7fr); gap:0.5rem; padding:0.5rem; margin-bottom:0.5rem; background:rgba(55,65,81,0.3); border-radius:0.3rem; font-size:0.75rem; font-weight:600; color:#9ca3af; text-transform:uppercase;">
-                        <div>Сущность</div>
-                        <div>Вероятность</div>
-                        <div>Наблюдений</div>
+                    <div style="display:grid; grid-template-columns:minmax(0,3fr) minmax(0,1fr) minmax(0,1.2fr); gap:0.5rem; padding:0.5rem; margin-bottom:0.5rem; background:rgba(55,65,81,0.3); border-radius:0.3rem; font-size:0.75rem; font-weight:600; color:#9ca3af; text-transform:uppercase;">
+                        <div>Описание</div>
+                        <div>Тип</div>
+                        <div text-align="center">Уверенность</div>
                     </div>
                     
-                    <div id="predictions-error" class="predictions-error" style="display:none; padding:0.5rem; margin-bottom:0.5rem;"></div>
-                    <div id="predictions-list" class="predictions-list" style="max-height:400px;">
+                    <div id="suggestions-error" class="predictions-error" style="display:none; padding:0.5rem; margin-bottom:0.5rem;"></div>
+                    <div id="suggestions-list" class="predictions-list" style="max-height:500px;">
                         <div class="predictions-loading">Анализируем историю...</div>
+                    </div>
+                </section>
+
+                <!-- Temporal Patterns Card -->
+                <section class="card entities-card" style="max-width:100%; margin-top:1.5rem;">
+                    <h2 style="margin-top:0;">⏰ Temporal Patterns</h2>
+                    <div style="margin-bottom:1rem; font-size:0.85rem; color:#9ca3af;">
+                        Обнаруженные временные паттерны (действия в определённые часы/дни)
+                    </div>
+                    
+                    <div style="display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr); gap:0.5rem; padding:0.5rem; margin-bottom:0.5rem; background:rgba(55,65,81,0.3); border-radius:0.3rem; font-size:0.75rem; font-weight:600; color:#9ca3af; text-transform:uppercase;">
+                        <div>Сущность → Состояние</div>
+                        <div>Время</div>
+                        <div>Дни</div>
+                        <div>Консистентность</div>
+                    </div>
+                    
+                    <div id="patterns-error" class="predictions-error" style="display:none; padding:0.5rem; margin-bottom:0.5rem;"></div>
+                    <div id="patterns-list" class="predictions-list" style="max-height:300px;">
+                        <div class="predictions-loading">Паттерны не обнаружены. Нажмите "Анализировать историю"</div>
                     </div>
                 </section>
             </section>
         </main>
         <script>
             async function loadAddonHealth() {
-                const container = document.getElementById("addon-health");
-                if (!container) return;
-
                 try {
                     const resp = await fetch("./health", { method: "GET" });
                     if (!resp.ok) {
@@ -481,234 +499,229 @@ app.MapGet("/", async context =>
                     }
 
                     const data = await resp.json();
-                    
-                    // Обновляем header информацию
                     document.getElementById("addon-version").textContent = "версия: " + (data.version ?? "0.1");
                     document.getElementById("addon-runtime").textContent = "runtime: " + (data.runtime ?? ".NET 8");
                     document.getElementById("addon-status-text").textContent = data.status ?? "ok";
                     document.getElementById("addon-status-dot").style.background = data.status === "ok" ? "#22c55e" : "#ef4444";
-                    
                 } catch (err) {
                     document.getElementById("addon-status-text").textContent = "error";
                     document.getElementById("addon-status-dot").style.background = "#ef4444";
                 }
             }
 
-            let entitiesSnapshot = { total: 0, limit: 0, items: [] };
+            let suggestionsSnapshot = { suggestions: [], statistics: {}, timestamp: "" };
+            let patternsSnapshot = { patterns: [] };
 
-            function renderEntities() {
-                const list = document.getElementById("entities-list");
-                const countBadge = document.getElementById("entities-count");
-                const errorBox = document.getElementById("entities-error");
-                if (!list || !countBadge || !errorBox) return;
+            function renderSuggestions() {
+                const list = document.getElementById("suggestions-list");
+                const errorBox = document.getElementById("suggestions-error");
+                if (!list || !errorBox) return;
 
-                const items = Array.isArray(entitiesSnapshot.items) ? entitiesSnapshot.items : [];
-                const total = typeof entitiesSnapshot.total === "number" ? entitiesSnapshot.total : items.length;
-
-                countBadge.textContent = items.length + " / " + total;
-                errorBox.style.display = "none";
-                list.innerHTML = "";
-
-                for (const st of items) {
-                    const entityId = st.entity_id || "(unknown)";
-                    const domain = st.domain || (entityId.includes(".") ? entityId.split(".")[0] : "other");
-                    const state = st.state ?? "";
-
-                    const row = document.createElement("div");
-                    row.className = "entity-row";
-                    row.innerHTML =
-                        '<div class="entity-id">' + entityId + '</div>' +
-                        '<div class="entity-domain">' + domain + '</div>' +
-                        '<div class="entity-state">' + state + '</div>';
-                    list.appendChild(row);
-                }
-            }
-
-            async function loadEntities() {
-                const list = document.getElementById("entities-list");
-                const countBadge = document.getElementById("entities-count");
-                const errorBox = document.getElementById("entities-error");
-                if (!list || !countBadge || !errorBox) return;
-
-                try {
-                    const params = new URLSearchParams();
-                    params.set("limit", "1000");
-
-                    const resp = await fetch("./api/states?" + params.toString(), { method: "GET" });
-                    if (!resp.ok) {
-                        const text = await resp.text();
-                        countBadge.textContent = "error";
-                        errorBox.style.display = "block";
-                        errorBox.textContent = "Failed to load entities: " + resp.status + " " + text;
-                        list.innerHTML = "";
-                        return;
-                    }
-
-                    const data = await resp.json();
-                    if (!data || !Array.isArray(data.items)) {
-                        countBadge.textContent = "0";
-                        errorBox.style.display = "block";
-                        errorBox.textContent = "Unexpected response format from Home Assistant API.";
-                        list.innerHTML = "";
-                        return;
-                    }
-
-                    entitiesSnapshot = data;
-                    renderEntities();
-                } catch (err) {
-                    countBadge.textContent = "error";
-                    errorBox.style.display = "block";
-                    errorBox.textContent = "Exception while loading entities: " + err;
-                    list.innerHTML = "";
-                }
-            }
-
-            let predictionsSnapshot = { predictions: [], timestamp: "", total_predictions: 0 };
-
-            function renderPredictions() {
-                const list = document.getElementById("predictions-list");
-                const countBadge = document.getElementById("predictions-count");
-                const errorBox = document.getElementById("predictions-error");
-                if (!list || !countBadge || !errorBox) return;
-
-                const predictions = Array.isArray(predictionsSnapshot.predictions) ? predictionsSnapshot.predictions : [];
-                const total = predictionsSnapshot.total_predictions ?? predictions.length;
+                const suggestions = Array.isArray(suggestionsSnapshot.suggestions) ? suggestionsSnapshot.suggestions : [];
+                const stats = suggestionsSnapshot.statistics || {};
 
                 // Обновляем информационную панель
-                document.getElementById("predictions-count").textContent = total + " действий";
-                document.getElementById("predictions-training").textContent = (predictionsSnapshot.training_samples ?? 0) + " образцов";
-                document.getElementById("predictions-source").textContent = predictionsSnapshot.data_source ? "HA + WebSocket" : "WebSocket";
+                document.getElementById("suggestions-count").textContent = suggestions.length + " шт.";
+                document.getElementById("suggestions-samples").textContent = (stats.total_events_analyzed ?? 0) + " событий";
+                document.getElementById("suggestions-entities").textContent = (stats.unique_entities ?? 0) + " сущностей";
                 
-                if (predictionsSnapshot.timestamp) {
-                    const ts = new Date(predictionsSnapshot.timestamp);
-                    const timeStr = ts.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-                    document.getElementById("predictions-status").textContent = "✓ " + timeStr;
+                if (suggestionsSnapshot.timestamp) {
+                    const ts = new Date(suggestionsSnapshot.timestamp);
+                    const timeStr = ts.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+                    document.getElementById("suggestions-status").textContent = "✓ " + timeStr;
                 }
 
                 errorBox.style.display = "none";
                 list.innerHTML = "";
 
-                if (predictions.length === 0) {
-                    list.innerHTML = '<div class="predictions-loading">Нет предсказаний для текущего времени</div>';
+                if (suggestions.length === 0) {
+                    list.innerHTML = '<div class="predictions-loading">Нет рекомендаций. Нажмите "Анализировать историю"</div>';
                     return;
                 }
 
-                for (const pred of predictions) {
-                    const entityId = pred.entity_id || "(unknown)";
-                    const probability = (pred.probability * 100).toFixed(1) + "%";
-                    const support = pred.support ?? "?";
-
+                for (const sugg of suggestions) {
+                    const confidence = (sugg.confidence * 100).toFixed(0) + "%";
+                    const typeEmoji = sugg.trigger_type === "time" ? "⏰" : "📊";
+                    
                     const row = document.createElement("div");
-                    row.className = "prediction-row";
-                    row.innerHTML =
-                        '<div class="prediction-entity">' + entityId + '</div>' +
-                        '<div class="prediction-probability">' + probability + '</div>' +
-                        '<div class="prediction-support">' + support + '</div>';
+                    row.style.cssText = "padding:0.6rem 0.5rem; border-bottom:1px solid rgba(31,41,55,0.9); cursor:pointer; transition:background 0.2s;";
+                    row.onmouseover = () => row.style.background = "rgba(55,65,81,0.3)";
+                    row.onmouseout = () => row.style.background = "transparent";
+                    
+                    row.innerHTML = 
+                        '<div style="display:grid; grid-template-columns:minmax(0,3fr) minmax(0,1fr) minmax(0,1.2fr); gap:0.5rem; font-size:0.8rem;">' +
+                        '<div style="color:#e5e7eb;"><strong>' + sugg.title + '</strong><br><span style="color:#9ca3af; font-size:0.75rem;">' + sugg.description + '</span></div>' +
+                        '<div style="color:#a5b4fc;">' + typeEmoji + ' ' + sugg.trigger_type + '</div>' +
+                        '<div style="color:#fbbf24; text-align:right; font-weight:600;">' + confidence + '</div>' +
+                        '</div>' +
+                        '<div style="margin-top:0.4rem; padding:0.4rem; background:rgba(15,23,42,0.9); border-radius:0.3rem; border:1px solid rgba(55,65,81,0.9); font-family:monospace; font-size:0.7rem; color:#38bdf8; max-height:0; overflow:hidden; transition:max-height 0.2s;" class="yaml-code">' +
+                        sugg.automation_yaml.replace(/</g, "&lt;").replace(/>/g, "&gt;") +
+                        '</div>';
+                    
+                    row.addEventListener("click", () => {
+                        const yaml = row.querySelector(".yaml-code");
+                        const currentHeight = yaml.style.maxHeight;
+                        yaml.style.maxHeight = currentHeight === "0px" || !currentHeight ? "400px" : "0px";
+                    });
+                    
                     list.appendChild(row);
                 }
             }
 
-            async function loadPredictions() {
-                const list = document.getElementById("predictions-list");
-                const countBadge = document.getElementById("predictions-count");
-                const errorBox = document.getElementById("predictions-error");
-                if (!list || !countBadge || !errorBox) return;
+            function renderPatterns() {
+                const list = document.getElementById("patterns-list");
+                const errorBox = document.getElementById("patterns-error");
+                if (!list || !errorBox) return;
+
+                const patterns = Array.isArray(patternsSnapshot.patterns) ? patternsSnapshot.patterns : [];
+
+                errorBox.style.display = "none";
+                list.innerHTML = "";
+
+                if (patterns.length === 0) {
+                    list.innerHTML = '<div class="predictions-loading">Паттерны не обнаружены</div>';
+                    return;
+                }
+
+                for (const pattern of patterns) {
+                    const time = pattern.hour.toString().padStart(2, "0") + ":" + pattern.minute.toString().padStart(2, "0");
+                    const days = (pattern.weekdays || []).map(d => ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"][d]).join(", ");
+                    const consistency = (pattern.consistency * 100).toFixed(0) + "%";
+                    
+                    const row = document.createElement("div");
+                    row.className = "prediction-row";
+                    row.style.gridTemplateColumns = "minmax(0,2fr) minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr)";
+                    row.innerHTML =
+                        '<div style="color:#e5e7eb;">' + pattern.entity_id + ' → <strong>' + pattern.target_state + '</strong></div>' +
+                        '<div style="color:#38bdf8; font-weight:600;">' + time + '</div>' +
+                        '<div style="color:#86efac;">' + days + '</div>' +
+                        '<div style="color:#fbbf24; text-align:right;">' + consistency + '</div>';
+                    list.appendChild(row);
+                }
+            }
+
+            async function loadSuggestions() {
+                const list = document.getElementById("suggestions-list");
+                const errorBox = document.getElementById("suggestions-error");
+                if (!list || !errorBox) return;
 
                 try {
-                    // Показываем индикатор загрузки
-                    const spinner = '<span class="spinner" style="margin-right:0.4rem;"></span>';
-                    countBadge.innerHTML = spinner + 'загрузка...';
+                    document.getElementById("suggestions-count").textContent = "загрузка...";
                     errorBox.style.display = "none";
 
-                    const resp = await fetch("./api/predictions", { method: "POST" });
+                    const resp = await fetch("./api/automation-suggestions", { method: "GET" });
                     if (!resp.ok) {
                         const text = await resp.text();
-                        countBadge.textContent = "error";
                         errorBox.style.display = "block";
-                        errorBox.textContent = "Failed to load predictions: " + resp.status + " " + text;
+                        errorBox.textContent = "Failed: " + resp.status + " " + text;
                         list.innerHTML = "";
                         return;
                     }
 
-                    const data = await resp.json();
-                    predictionsSnapshot = data;
-                    renderPredictions();
+                    suggestionsSnapshot = await resp.json();
+                    renderSuggestions();
                 } catch (err) {
-                    countBadge.textContent = "error";
                     errorBox.style.display = "block";
-                    errorBox.textContent = "Exception while loading predictions: " + err;
+                    errorBox.textContent = "Error: " + err;
                     list.innerHTML = "";
                 }
             }
 
-            async function trainModel() {
-                const trainButton = document.getElementById("predictions-train-button");
-                const trainingInfo = document.getElementById("predictions-training");
-                const errorBox = document.getElementById("predictions-error");
-                if (!trainButton || !trainingInfo || !errorBox) return;
+            async function loadPatterns() {
+                const list = document.getElementById("patterns-list");
+                const errorBox = document.getElementById("patterns-error");
+                if (!list || !errorBox) return;
+
+                try {
+                    list.innerHTML = '<div class="predictions-loading">Загрузка паттернов...</div>';
+                    errorBox.style.display = "none";
+
+                    const resp = await fetch("./api/patterns", { method: "GET" });
+                    if (!resp.ok) {
+                        const text = await resp.text();
+                        errorBox.style.display = "block";
+                        errorBox.textContent = "Failed: " + resp.status + " " + text;
+                        list.innerHTML = "";
+                        return;
+                    }
+
+                    patternsSnapshot = await resp.json();
+                    renderPatterns();
+                } catch (err) {
+                    errorBox.style.display = "block";
+                    errorBox.textContent = "Error: " + err;
+                    list.innerHTML = "";
+                }
+            }
+
+            async function trainAndAnalyze() {
+                const trainButton = document.getElementById("suggestions-train-button");
+                const errorBox = document.getElementById("suggestions-error");
+                if (!trainButton || !errorBox) return;
 
                 try {
                     trainButton.disabled = true;
-                    trainingInfo.textContent = 'training...';
-                    errorBox.style.display = 'none';
+                    trainButton.textContent = "🔄 Анализирование...";
+                    errorBox.style.display = "none";
 
-                    const resp = await fetch('./api/train', { method: 'POST' });
+                    const resp = await fetch("./api/train", { method: "POST" });
                     if (!resp.ok) {
                         const text = await resp.text();
-                        errorBox.style.display = 'block';
-                        errorBox.textContent = 'Failed to start training: ' + resp.status + ' ' + text;
-                        trainingInfo.textContent = '-';
+                        errorBox.style.display = "block";
+                        errorBox.textContent = "Failed: " + resp.status + " " + text;
+                        trainButton.textContent = "🚀 Анализировать историю";
                         trainButton.disabled = false;
                         return;
                     }
 
                     const data = await resp.json();
-                    if (data.status === 'ok') {
-                        trainingInfo.textContent = (data.training_samples ?? 0) + ' образцов';
-                        // сразу обновим predictions после тренировки
-                        await loadPredictions();
+                    if (data.status === "ok") {
+                        // Загружаем рекомендации и паттерны
+                        await loadSuggestions();
+                        await loadPatterns();
                     } else {
-                        errorBox.style.display = 'block';
-                        errorBox.textContent = 'Training failed: ' + JSON.stringify(data);
+                        errorBox.style.display = "block";
+                        errorBox.textContent = "Analysis failed: " + JSON.stringify(data);
                     }
                 } catch (err) {
-                    errorBox.style.display = 'block';
-                    errorBox.textContent = 'Exception while training: ' + err;
+                    errorBox.style.display = "block";
+                    errorBox.textContent = "Error: " + err;
                 } finally {
+                    trainButton.textContent = "🚀 Анализировать историю";
                     trainButton.disabled = false;
                 }
             }
 
             document.addEventListener("DOMContentLoaded", () => {
-                const predictionsButton = document.getElementById("predictions-load-button");
-                const predictionsHistoryButton = document.getElementById("predictions-history-button");
-                const predictionsTrainButton = document.getElementById("predictions-train-button");
+                const suggestionsLoadBtn = document.getElementById("suggestions-load-button");
+                const suggestionsTrainBtn = document.getElementById("suggestions-train-button");
+                const suggestionsPatternsBtn = document.getElementById("suggestions-patterns-button");
 
-                if (predictionsButton) {
-                    predictionsButton.addEventListener("click", () => loadPredictions());
+                if (suggestionsLoadBtn) {
+                    suggestionsLoadBtn.addEventListener("click", loadSuggestions);
                 }
 
-                if (predictionsHistoryButton) {
-                    predictionsHistoryButton.addEventListener("click", () => {
-                        alert("📊 История предсказаний за последние 7 дней:\n\n- Анализируется база данных Home Assistant\n- Выявляются паттерны по дням недели и часам\n- Рассчитывается вероятность для каждого устройства\n\nТекущая обновляется каждые 30 секунд");
+                if (suggestionsTrainBtn) {
+                    suggestionsTrainBtn.addEventListener("click", trainAndAnalyze);
+                }
+
+                if (suggestionsPatternsBtn) {
+                    suggestionsPatternsBtn.addEventListener("click", () => {
+                        const patternsCard = document.querySelector(".entities-card");
+                        if (patternsCard) {
+                            patternsCard.scrollIntoView({ behavior: "smooth" });
+                            loadPatterns();
+                        }
                     });
                 }
 
-                if (predictionsTrainButton) {
-                    predictionsTrainButton.addEventListener("click", () => trainModel());
-                }
-
                 loadAddonHealth();
-                // автообновление состояния аддона раз в 30 секунд
+                // Автообновление здоровья аддона каждые 30 секунд
                 setInterval(loadAddonHealth, 30000);
 
-                // Автозагрузка predictions при загрузке страницы
-                loadPredictions();
-
-                // Автообновление predictions каждые 30 секунд (в реальном времени)
-                setInterval(loadPredictions, 30000);
+                // Автозагрузка рекомендаций при загрузке страницы
+                loadSuggestions();
             });
-        </script>
     </body>
     </html>
     """;
@@ -903,52 +916,63 @@ app.MapPost("/api/train", async (IHttpClientFactory httpClientFactory) =>
     }
 });
 
-// API-эндпоинт для получения предсказаний из Python ML модели
-// POST /api/predictions - вызывает Python модель для анализа истории и предсказания действий
-app.MapPost("/api/predictions", async (IHttpClientFactory httpClientFactory) =>
+// Proxy endpoint для получения рекомендаций по автоматизации из Python сервиса
+app.MapGet("/api/automation-suggestions", async (IHttpClientFactory httpClientFactory) =>
 {
     try
     {
         var pythonClient = httpClientFactory.CreateClient("python");
-        
-        // Вызываем Python endpoint для получения предсказаний
-        using var response = await pythonClient.PostAsync("api/predictions", 
-            new StringContent("{}", System.Text.Encoding.UTF8, "application/json"));
+        using var response = await pythonClient.GetAsync("api/automation-suggestions");
         
         if (!response.IsSuccessStatusCode)
         {
             var errorBody = await response.Content.ReadAsStringAsync();
             return Results.Json(
-                new
-                {
-                    error = "Failed to get predictions from Python service",
-                    status = (int)response.StatusCode,
-                    details = errorBody
-                },
+                new { error = "Failed to get suggestions", status = (int)response.StatusCode },
                 statusCode: StatusCodes.Status502BadGateway
             );
         }
 
         var content = await response.Content.ReadAsStringAsync();
-        var predictions = JsonDocument.Parse(content);
-        
-        return Results.Json(predictions.RootElement);
-    }
-    catch (HttpRequestException ex)
-    {
-        return Results.Json(
-            new
-            {
-                error = "Failed to connect to Python service",
-                message = ex.Message,
-                hint = "Ensure Python Flask service is running and PYTHON_API_URL is configured"
-            },
-            statusCode: StatusCodes.Status503ServiceUnavailable
-        );
+        return Results.Content(content, "application/json");
     }
     catch (Exception ex)
     {
         return Results.Json(
+            new { error = ex.Message },
+            statusCode: StatusCodes.Status503ServiceUnavailable
+        );
+    }
+});
+
+// Proxy endpoint для получения обнаруженных паттернов
+app.MapGet("/api/patterns", async (IHttpClientFactory httpClientFactory) =>
+{
+    try
+    {
+        var pythonClient = httpClientFactory.CreateClient("python");
+        using var response = await pythonClient.GetAsync("api/patterns");
+        
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync();
+            return Results.Json(
+                new { error = "Failed to get patterns", status = (int)response.StatusCode },
+                statusCode: StatusCodes.Status502BadGateway
+            );
+        }
+
+        var content = await response.Content.ReadAsStringAsync();
+        return Results.Content(content, "application/json");
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(
+            new { error = ex.Message },
+            statusCode: StatusCodes.Status503ServiceUnavailable
+        );
+    }
+});
             new
             {
                 error = "Exception while calling Python predictions service",
