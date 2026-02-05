@@ -27,6 +27,19 @@ builder.Services.AddHttpClient("hass", client =>
     }
 });
 
+// HttpClient для общения с Python ML моделью (локальный Flask сервис)
+builder.Services.AddHttpClient("python", client =>
+{
+    var baseUrl = Environment.GetEnvironmentVariable("PYTHON_API_URL")
+                  ?? "http://127.0.0.1:5000/";
+    
+    if (!baseUrl.EndsWith("/"))
+    {
+        baseUrl += "/";
+    }
+    client.BaseAddress = new Uri(baseUrl);
+});
+
 var app = builder.Build();
 
 // Простая HTML-страница для ingress Home Assistant
@@ -314,6 +327,61 @@ app.MapGet("/", async context =>
                 border-radius: 0.3rem;
                 border: 1px solid rgba(55, 65, 81, 0.9);
             }
+            .predictions-card {
+                background: radial-gradient(circle at bottom left, rgba(168, 85, 247, 0.14), rgba(15, 23, 42, 0.96));
+            }
+            .predictions-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 0.5rem;
+                margin-bottom: 0.4rem;
+            }
+            .predictions-badge {
+                font-size: 0.75rem;
+                padding: 0.1rem 0.5rem;
+                border-radius: 999px;
+                border: 1px solid rgba(168, 85, 247, 0.7);
+                color: #e9d5ff;
+                background: rgba(88, 28, 135, 0.35);
+            }
+            .predictions-list {
+                max-height: 240px;
+                overflow: auto;
+                margin-top: 0.4rem;
+                padding-right: 0.15rem;
+            }
+            .prediction-row {
+                display: grid;
+                grid-template-columns: minmax(0, 1.8fr) minmax(0, 0.8fr) minmax(0, 0.6fr);
+                gap: 0.4rem;
+                padding: 0.3rem 0.15rem;
+                border-bottom: 1px solid rgba(31, 41, 55, 0.9);
+                font-size: 0.78rem;
+            }
+            .prediction-row:last-child {
+                border-bottom: none;
+            }
+            .prediction-entity {
+                color: #e5e7eb;
+                word-break: break-all;
+            }
+            .prediction-probability {
+                color: #d8b4fe;
+                font-weight: 600;
+            }
+            .prediction-support {
+                color: #86efac;
+                text-align: right;
+            }
+            .predictions-error {
+                font-size: 0.8rem;
+                color: #fecaca;
+            }
+            .predictions-loading {
+                font-size: 0.8rem;
+                color: #9ca3af;
+            }
         </style>
     </head>
     <body>
@@ -370,6 +438,24 @@ app.MapGet("/", async context =>
                         <div id="entities-error" class="entities-error" style="display:none;"></div>
                         <div id="entities-list" class="entities-list">
                             <div style="font-size:0.8rem; color:#6b7280;">Нажмите &laquo;Отобразить сущности&raquo;, чтобы загрузить данные из Home Assistant.</div>
+                        </div>
+                    </div>
+                </section>
+                <section class="card predictions-card">
+                    <h2>ML Predictions</h2>
+                    <div class="card predictions-card">
+                        <div class="predictions-header">
+                            <h3 style="margin:0; font-size:0.85rem; letter-spacing:0.03em; text-transform:uppercase; color:#9ca3af;">
+                                Predicted actions
+                            </h3>
+                            <div style="display:flex; align-items:center; gap:0.5rem;">
+                                <button id="predictions-load-button" type="button" class="entities-button">Анализировать</button>
+                                <span id="predictions-count" class="predictions-badge">idle</span>
+                            </div>
+                        </div>
+                        <div id="predictions-error" class="predictions-error" style="display:none;"></div>
+                        <div id="predictions-list" class="predictions-list">
+                            <div class="predictions-loading">Нажмите &laquo;Анализировать&raquo;, чтобы получить предсказания на основе истории.</div>
                         </div>
                     </div>
                 </section>
@@ -493,11 +579,82 @@ app.MapGet("/", async context =>
                 }
             }
 
+            let predictionsSnapshot = { predictions: [], timestamp: "", total_predictions: 0 };
+
+            function renderPredictions() {
+                const list = document.getElementById("predictions-list");
+                const countBadge = document.getElementById("predictions-count");
+                const errorBox = document.getElementById("predictions-error");
+                if (!list || !countBadge || !errorBox) return;
+
+                const predictions = Array.isArray(predictionsSnapshot.predictions) ? predictionsSnapshot.predictions : [];
+                const total = predictionsSnapshot.total_predictions ?? predictions.length;
+
+                countBadge.textContent = total + " действий";
+                errorBox.style.display = "none";
+                list.innerHTML = "";
+
+                if (predictions.length === 0) {
+                    list.innerHTML = '<div class="predictions-loading">Нет предсказаний для текущего времени</div>';
+                    return;
+                }
+
+                for (const pred of predictions) {
+                    const entityId = pred.entity_id || "(unknown)";
+                    const probability = (pred.probability * 100).toFixed(1) + "%";
+                    const support = pred.support ?? "?";
+
+                    const row = document.createElement("div");
+                    row.className = "prediction-row";
+                    row.innerHTML =
+                        '<div class="prediction-entity">' + entityId + '</div>' +
+                        '<div class="prediction-probability">' + probability + '</div>' +
+                        '<div class="prediction-support">' + support + '</div>';
+                    list.appendChild(row);
+                }
+            }
+
+            async function loadPredictions() {
+                const list = document.getElementById("predictions-list");
+                const countBadge = document.getElementById("predictions-count");
+                const errorBox = document.getElementById("predictions-error");
+                if (!list || !countBadge || !errorBox) return;
+
+                try {
+                    countBadge.textContent = "анализ...";
+                    list.innerHTML = '<div class="predictions-loading">Анализируем историю...</div>';
+
+                    const resp = await fetch("./api/predictions", { method: "POST" });
+                    if (!resp.ok) {
+                        const text = await resp.text();
+                        countBadge.textContent = "error";
+                        errorBox.style.display = "block";
+                        errorBox.textContent = "Failed to load predictions: " + resp.status + " " + text;
+                        list.innerHTML = "";
+                        return;
+                    }
+
+                    const data = await resp.json();
+                    predictionsSnapshot = data;
+                    renderPredictions();
+                } catch (err) {
+                    countBadge.textContent = "error";
+                    errorBox.style.display = "block";
+                    errorBox.textContent = "Exception while loading predictions: " + err;
+                    list.innerHTML = "";
+                }
+            }
+
             document.addEventListener("DOMContentLoaded", () => {
                 const loadButton = document.getElementById("entities-load-button");
+                const predictionsButton = document.getElementById("predictions-load-button");
 
                 if (loadButton) {
                     loadButton.addEventListener("click", () => loadEntities());
+                }
+
+                if (predictionsButton) {
+                    predictionsButton.addEventListener("click", () => loadPredictions());
                 }
 
                 loadAddonHealth();
@@ -632,6 +789,62 @@ app.MapGet("/api/states", async (IHttpClientFactory httpClientFactory, string? d
             new
             {
                 error = "Exception while calling Home Assistant API",
+                message = ex.Message
+            },
+            statusCode: StatusCodes.Status500InternalServerError
+        );
+    }
+});
+
+// API-эндпоинт для получения предсказаний из Python ML модели
+// POST /api/predictions - вызывает Python модель для анализа истории и предсказания действий
+app.MapPost("/api/predictions", async (IHttpClientFactory httpClientFactory) =>
+{
+    try
+    {
+        var pythonClient = httpClientFactory.CreateClient("python");
+        
+        // Вызываем Python endpoint для получения предсказаний
+        using var response = await pythonClient.PostAsync("api/predictions", 
+            new StringContent("{}", System.Text.Encoding.UTF8, "application/json"));
+        
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync();
+            return Results.Json(
+                new
+                {
+                    error = "Failed to get predictions from Python service",
+                    status = (int)response.StatusCode,
+                    details = errorBody
+                },
+                statusCode: StatusCodes.Status502BadGateway
+            );
+        }
+
+        var content = await response.Content.ReadAsStringAsync();
+        var predictions = JsonDocument.Parse(content);
+        
+        return Results.Json(predictions.RootElement);
+    }
+    catch (HttpRequestException ex)
+    {
+        return Results.Json(
+            new
+            {
+                error = "Failed to connect to Python service",
+                message = ex.Message,
+                hint = "Ensure Python Flask service is running and PYTHON_API_URL is configured"
+            },
+            statusCode: StatusCodes.Status503ServiceUnavailable
+        );
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(
+            new
+            {
+                error = "Exception while calling Python predictions service",
                 message = ex.Message
             },
             statusCode: StatusCodes.Status500InternalServerError

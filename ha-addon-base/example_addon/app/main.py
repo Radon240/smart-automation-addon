@@ -1,11 +1,14 @@
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string, request
 import os
 import threading
 import asyncio
 import json
+from datetime import datetime
 
 import requests
 import aiohttp
+
+from ml_model import TimeSlotHabitModel, events_from_ha_states
 
 
 SUPERVISOR_TOKEN = os.getenv("SUPERVISOR_TOKEN")
@@ -17,6 +20,9 @@ app = Flask(__name__)
 # Храним последние несколько событий для отображения в UI
 last_events: list[dict] = []
 MAX_EVENTS = 20
+
+# ML модель для предсказаний
+ml_model = TimeSlotHabitModel(min_support=2, min_confidence=0.4)
 
 
 @app.route("/")
@@ -100,6 +106,64 @@ def index():
 @app.route("/health")
 def health():
     return jsonify(status="ok")
+
+
+@app.route("/api/predictions", methods=["POST"])
+def get_predictions():
+    """
+    API endpoint для получения предсказаний на основе истории событий Home Assistant.
+    Вызывается из .NET addon для анализа привычек и предложения автоматизаций.
+    """
+    try:
+        # Получаем текущую дату и время
+        now = datetime.now()
+        
+        # Если у нас есть сохранённые события, тренируем модель на них
+        if last_events:
+            # Преобразуем события HA в формат для модели
+            ha_states = []
+            for event_data in last_events:
+                ev = event_data.get("event", {})
+                data = ev.get("data", {}) or {}
+                new_state = data.get("new_state")
+                
+                if new_state:
+                    ha_states.append(new_state)
+            
+            # Преобразуем в Event объекты
+            events = events_from_ha_states(ha_states)
+            
+            # Тренируем модель
+            if events:
+                ml_model.fit(events)
+        
+        # Получаем предсказания для текущего времени
+        predictions = ml_model.predict_for_datetime(now)
+        
+        # Форматируем ответ
+        result = {
+            "timestamp": now.isoformat(),
+            "weekday": now.weekday(),
+            "hour": now.hour,
+            "predictions": [
+                {
+                    "entity_id": p.entity_id,
+                    "state": p.state,
+                    "probability": round(p.probability, 3),
+                    "support": p.support
+                }
+                for p in predictions
+            ],
+            "total_predictions": len(predictions)
+        }
+        
+        return jsonify(result), 200
+    except Exception as e:
+        print(f"[diploma_addon] Error in predictions endpoint: {e}")
+        return jsonify({
+            "error": str(e),
+            "status": "error"
+        }), 500
 
 
 async def _listen_events_loop():
