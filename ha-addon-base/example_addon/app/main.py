@@ -15,6 +15,13 @@ SUPERVISOR_TOKEN = os.getenv("SUPERVISOR_TOKEN")
 SUPERVISOR_WS_URL = "ws://supervisor/core/websocket"
 SUPERVISOR_API_URL = "http://supervisor/core/api"
 
+# Model configuration from Home Assistant addon config.yaml
+# These are passed as environment variables by the HA supervisor
+MODEL_MIN_SUPPORT = int(os.getenv("MIN_SUPPORT", "5"))
+MODEL_MIN_CONFIDENCE = float(os.getenv("MIN_CONFIDENCE", "0.6"))
+HISTORY_DAYS = int(os.getenv("HISTORY_DAYS", "7"))
+TRAIN_HOUR = int(os.getenv("TRAIN_HOUR", "3"))
+
 app = Flask(__name__)
 
 # Храним последние несколько событий для отображения в UI
@@ -22,7 +29,9 @@ last_events: list[dict] = []
 MAX_EVENTS = 20
 
 # ML модель для предсказаний
-ml_model = TimeSlotHabitModel(min_support=2, min_confidence=0.4)
+ml_model = TimeSlotHabitModel(min_support=MODEL_MIN_SUPPORT, min_confidence=MODEL_MIN_CONFIDENCE)
+
+print(f"[diploma_addon] Configuration: min_support={MODEL_MIN_SUPPORT}, min_confidence={MODEL_MIN_CONFIDENCE}, history_days={HISTORY_DAYS}, train_hour={TRAIN_HOUR}")
 
 # Статус обучения
 last_trained = None
@@ -112,6 +121,20 @@ def health():
     return jsonify(status="ok")
 
 
+@app.route("/api/config", methods=["GET"])
+def get_config():
+    """Return current model configuration."""
+    return jsonify({
+        "min_support": MODEL_MIN_SUPPORT,
+        "min_confidence": MODEL_MIN_CONFIDENCE,
+        "history_days": HISTORY_DAYS,
+        "train_hour": TRAIN_HOUR,
+        "last_trained": last_trained.isoformat() if last_trained else None,
+        "training_in_progress": training_in_progress,
+        "last_training_samples": last_training_samples
+    }), 200
+
+
 @app.route("/api/predictions", methods=["POST"])
 def get_predictions():
     """
@@ -159,7 +182,7 @@ def get_predictions():
 def _fetch_history_from_ha():
     """
     Получает историю состояний сущностей из Home Assistant REST API.
-    Запрашивает последние 7 дней для всех сущностей.
+    Запрашивает последние N дней для всех сущностей (N = HISTORY_DAYS).
     """
     if not SUPERVISOR_TOKEN:
         print("[diploma_addon] SUPERVISOR_TOKEN not set, skipping history fetch")
@@ -171,13 +194,13 @@ def _fetch_history_from_ha():
         from datetime import timedelta
         
         end_time = datetime.now()
-        start_time = end_time - timedelta(days=7)  # Последние 7 дней
+        start_time = end_time - timedelta(days=HISTORY_DAYS)
         
         url = f"{SUPERVISOR_API_URL}/history/period?start_time={start_time.isoformat()}&end_time={end_time.isoformat()}"
         
         headers = {"Authorization": f"Bearer {SUPERVISOR_TOKEN}"}
         
-        print(f"[diploma_addon] Fetching history from {start_time.date()} to {end_time.date()}...")
+        print(f"[diploma_addon] Fetching history from {start_time.date()} to {end_time.date()} (history_days={HISTORY_DAYS})...")
         
         response = requests.get(url, headers=headers, timeout=10)
         
@@ -258,11 +281,10 @@ def _nightly_trainer_thread():
     """Background thread that runs training once a day at configured hour."""
     import time
     from datetime import timedelta
-    hour = int(os.getenv("TRAIN_HOUR", "3"))
-    print(f"[diploma_addon] Nightly trainer started, will run at hour {hour}")
+    print(f"[diploma_addon] Nightly trainer started, will run at hour {TRAIN_HOUR}")
     while True:
         now = datetime.now()
-        run_at = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        run_at = now.replace(hour=TRAIN_HOUR, minute=0, second=0, microsecond=0)
         if run_at <= now:
             run_at = run_at + timedelta(days=1)
         wait_seconds = (run_at - now).total_seconds()

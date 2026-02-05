@@ -15,8 +15,40 @@ arch:
   - amd64
 options:
   log_level: info
+  min_support: 5
+  min_confidence: 0.6
+  history_days: 7
+  train_hour: 3
 schema:
   log_level: list(info|debug)
+  min_support:
+    name: "Minimum Support (event count)"
+    description: "Minimum number of observations required to suggest an action"
+    type: integer
+    default: 5
+    min: 1
+    max: 100
+  min_confidence:
+    name: "Minimum Confidence"
+    description: "Minimum probability threshold (0.0 to 1.0) for predictions"
+    type: float
+    default: 0.6
+    min: 0.0
+    max: 1.0
+  history_days:
+    name: "History Period (days)"
+    description: "How many days of HA history to fetch for training"
+    type: integer
+    default: 7
+    min: 1
+    max: 365
+  train_hour:
+    name: "Nightly Training Hour"
+    description: "Hour (0-23) when automatic training should run"
+    type: integer
+    default: 3
+    min: 0
+    max: 23
 ports:
   8080/tcp: 8080
 webui: "http://[HOST]:[PORT:8080]"
