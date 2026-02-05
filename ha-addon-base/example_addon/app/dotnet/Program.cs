@@ -403,73 +403,65 @@ app.MapGet("/", async context =>
                 <div class="title">
                     <div class="title-main">
                         <span>Adaptive Home Automations</span>
-                        <span class="pill">.NET core · prototype</span>
+                        <span class="pill">.NET core · Python ML</span>
                     </div>
                     <div class="title-sub">
-                        Home Assistant addon shell for intelligent habit-based automations
+                        Intelligent habit-based home automation predictions
                     </div>
                 </div>
-                <div class="status-row">
-                    <span class="status-dot" aria-hidden="true"></span>
-                    <span>Service online</span>
+                <div style="display:flex; gap:1.5rem; align-items:flex-start;">
+                    <div style="text-align:right; font-size:0.75rem; color:#9ca3af;">
+                        <div id="addon-version" style="margin-bottom:0.3rem;">версия: загрузка...</div>
+                        <div id="addon-runtime" style="margin-bottom:0.3rem;">runtime: загрузка...</div>
+                        <div id="addon-status" style="display:flex; align-items:center; gap:0.3rem; justify-content:flex-end;">
+                            <span class="status-dot" id="addon-status-dot" aria-hidden="true"></span>
+                            <span id="addon-status-text">online</span>
+                        </div>
+                    </div>
                 </div>
             </header>
-            <section class="body">
-                <section class="card">
-                    <h2>Addon state</h2>
-                    <div class="hero-title">
-                        Runtime and health
+            <section class="body" style="display:block; padding:1.4rem 1.5rem;">
+                <section class="card predictions-card" style="max-width:100%;">
+                    <h2 style="margin-top:0;">ML Predictions</h2>
+                    <div style="margin-bottom:1rem; font-size:0.85rem; color:#9ca3af;">
+                        Предсказание вероятных действий на основе анализа истории домашней автоматизации (последние 7 дней)
                     </div>
-                    <p class="hero-text">
-                        This block reflects the current state of the addon runtime and basic configuration.
-                        In the future it can include model status, last analysis timestamps and diagnostic
-                        information useful for debugging automations.
-                    </p>
-                    <div class="chips">
-                        <span class="chip">.NET 8</span>
-                        <span class="chip">Home Assistant Supervisor API</span>
-                        <span class="chip">Python models (planned)</span>
+                    
+                    <div style="display:flex; gap:0.5rem; margin-bottom:1rem;">
+                        <button id="predictions-load-button" type="button" class="entities-button">🔄 Обновить сейчас</button>
+                        <button id="predictions-history-button" type="button" class="entities-button">📊 История (7 дней)</button>
                     </div>
-                    <div class="timeline" id="addon-health">
-                        <div style="font-size:0.8rem; color:#6b7280;">
-                            Loading addon health from <code>/health</code>…
-                        </div>
-                    </div>
-                </section>
-                <section class="card right-card">
-                    <h2>Home Assistant entities</h2>
-                    <div class="card entities-card">
-                        <div class="entities-header">
-                            <h3 style="margin:0; font-size:0.85rem; letter-spacing:0.03em; text-transform:uppercase; color:#9ca3af;">
-                                Entities snapshot
-                            </h3>
-                            <div style="display:flex; align-items:center; gap:0.5rem;">
-                                <button id="entities-load-button" type="button" class="entities-button">Отобразить сущности</button>
-                                <span id="entities-count" class="entities-badge">idle</span>
+                    
+                    <div class="predictions-header" style="margin-bottom:1rem; padding:0.75rem; background:rgba(15,23,42,0.5); border-radius:0.5rem; border:1px solid rgba(55,65,81,0.5);">
+                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:0.75rem; font-size:0.75rem;">
+                            <div>
+                                <div style="color:#9ca3af; margin-bottom:0.2rem;">Статус обновления</div>
+                                <div id="predictions-status" style="color:#e5e7eb; font-weight:600;">Загрузка...</div>
+                            </div>
+                            <div>
+                                <div style="color:#9ca3af; margin-bottom:0.2rem;">Образцы обучения</div>
+                                <div id="predictions-training" style="color:#e5e7eb; font-weight:600;">-</div>
+                            </div>
+                            <div>
+                                <div style="color:#9ca3af; margin-bottom:0.2rem;">Предсказаний</div>
+                                <div id="predictions-count" style="color:#e5e7eb; font-weight:600;">-</div>
+                            </div>
+                            <div>
+                                <div style="color:#9ca3af; margin-bottom:0.2rem;">Источник данных</div>
+                                <div id="predictions-source" style="color:#e5e7eb; font-weight:600;">-</div>
                             </div>
                         </div>
-                        <div id="entities-error" class="entities-error" style="display:none;"></div>
-                        <div id="entities-list" class="entities-list">
-                            <div style="font-size:0.8rem; color:#6b7280;">Нажмите &laquo;Отобразить сущности&raquo;, чтобы загрузить данные из Home Assistant.</div>
-                        </div>
                     </div>
-                </section>
-                <section class="card predictions-card">
-                    <h2>ML Predictions</h2>
-                    <div class="card predictions-card">
-                        <div class="predictions-header">
-                            <h3 style="margin:0; font-size:0.85rem; letter-spacing:0.03em; text-transform:uppercase; color:#9ca3af;">
-                                Predicted actions <span style="font-size:0.7rem; color:#6b7280;">(обновляется каждые 30 сек)</span>
-                            </h3>
-                            <div style="display:flex; align-items:center; gap:0.5rem;">
-                                <button id="predictions-load-button" type="button" class="entities-button">Обновить сейчас</button>
-                                <span id="predictions-count" class="predictions-badge">idle</span>
-                            </div>
-                        </div>
-                        <div id="predictions-error" class="predictions-error" style="display:none;"></div>
-                        <div id="predictions-list" class="predictions-list">
-                            <div class="predictions-loading">Анализируем историю...</div>
-                        </div>
+                    
+                    <div style="display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,0.7fr); gap:0.5rem; padding:0.5rem; margin-bottom:0.5rem; background:rgba(55,65,81,0.3); border-radius:0.3rem; font-size:0.75rem; font-weight:600; color:#9ca3af; text-transform:uppercase;">
+                        <div>Сущность</div>
+                        <div>Вероятность</div>
+                        <div>Наблюдений</div>
+                    </div>
+                    
+                    <div id="predictions-error" class="predictions-error" style="display:none; padding:0.5rem; margin-bottom:0.5rem;"></div>
+                    <div id="predictions-list" class="predictions-list" style="max-height:400px;">
+                        <div class="predictions-loading">Анализируем историю...</div>
                     </div>
                 </section>
             </section>
@@ -482,44 +474,22 @@ app.MapGet("/", async context =>
                 try {
                     const resp = await fetch("./health", { method: "GET" });
                     if (!resp.ok) {
-                        container.innerHTML = "<div style='font-size:0.8rem; color:#fecaca;'>Failed to load health: " +
-                            resp.status + " " + resp.statusText + "</div>";
+                        document.getElementById("addon-status-text").textContent = "error";
+                        document.getElementById("addon-status-dot").style.background = "#ef4444";
                         return;
                     }
 
                     const data = await resp.json();
-                    container.innerHTML = "";
-
-                    const grid = document.createElement("div");
-                    grid.style.display = "grid";
-                    grid.style.gridTemplateColumns = "minmax(0, 1.1fr) minmax(0, 1.2fr)";
-                    grid.style.gap = "0.4rem 0.8rem";
-
-                    const items = [
-                        ["status", data.status ?? "unknown"],
-                        ["runtime", data.runtime ?? "(none)"],
-                        ["source", data.source ?? "(unknown)"],
-                    ];
-
-                    for (const [label, value] of items) {
-                        const k = document.createElement("div");
-                        k.style.color = "#9ca3af";
-                        k.style.fontSize = "0.78rem";
-                        k.textContent = label;
-
-                        const v = document.createElement("div");
-                        v.style.color = "#e5e7eb";
-                        v.style.fontSize = "0.85rem";
-                        v.textContent = String(value);
-
-                        grid.appendChild(k);
-                        grid.appendChild(v);
-                    }
-
-                    container.appendChild(grid);
+                    
+                    // Обновляем header информацию
+                    document.getElementById("addon-version").textContent = "версия: " + (data.version ?? "0.1");
+                    document.getElementById("addon-runtime").textContent = "runtime: " + (data.runtime ?? ".NET 8");
+                    document.getElementById("addon-status-text").textContent = data.status ?? "ok";
+                    document.getElementById("addon-status-dot").style.background = data.status === "ok" ? "#22c55e" : "#ef4444";
+                    
                 } catch (err) {
-                    container.innerHTML = "<div style='font-size:0.8rem; color:#fecaca;'>Exception while loading health: " +
-                        err + "</div>";
+                    document.getElementById("addon-status-text").textContent = "error";
+                    document.getElementById("addon-status-dot").style.background = "#ef4444";
                 }
             }
 
@@ -603,40 +573,22 @@ app.MapGet("/", async context =>
                 const predictions = Array.isArray(predictionsSnapshot.predictions) ? predictionsSnapshot.predictions : [];
                 const total = predictionsSnapshot.total_predictions ?? predictions.length;
 
-                countBadge.textContent = total + " действий";
-                errorBox.style.display = "none";
-                list.innerHTML = "";
-
-                // Показываем информацию об обновлении и источнике данных
+                // Обновляем информационную панель
+                document.getElementById("predictions-count").textContent = total + " действий";
+                document.getElementById("predictions-training").textContent = (predictionsSnapshot.training_samples ?? 0) + " образцов";
+                document.getElementById("predictions-source").textContent = predictionsSnapshot.data_source ? "HA + WebSocket" : "WebSocket";
+                
                 if (predictionsSnapshot.timestamp) {
                     const ts = new Date(predictionsSnapshot.timestamp);
                     const timeStr = ts.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-                    const infoDiv = document.createElement("div");
-                    infoDiv.style.fontSize = "0.75rem";
-                    infoDiv.style.color = "#9ca3af";
-                    infoDiv.style.marginBottom = "0.5rem";
-                    infoDiv.style.paddingBottom = "0.5rem";
-                    infoDiv.style.borderBottom = "1px solid rgba(55, 65, 81, 0.5)";
-                    
-                    let infoText = "⏰ Обновлено в " + timeStr;
-                    
-                    // Добавляем информацию об источнике данных
-                    if (predictionsSnapshot.data_source) {
-                        infoText += " | 📊 Источник: " + predictionsSnapshot.data_source;
-                    }
-                    
-                    // Добавляем информацию о количестве образцов обучения
-                    if (predictionsSnapshot.training_samples) {
-                        infoText += " | 📈 Образцы: " + predictionsSnapshot.training_samples;
-                    }
-                    
-                    infoText += " | Вероятность > 40%";
-                    infoDiv.textContent = infoText;
-                    list.appendChild(infoDiv);
+                    document.getElementById("predictions-status").textContent = "✓ " + timeStr;
                 }
 
+                errorBox.style.display = "none";
+                list.innerHTML = "";
+
                 if (predictions.length === 0) {
-                    list.innerHTML += '<div class="predictions-loading">Нет предсказаний для текущего времени</div>';
+                    list.innerHTML = '<div class="predictions-loading">Нет предсказаний для текущего времени</div>';
                     return;
                 }
 
@@ -689,20 +641,22 @@ app.MapGet("/", async context =>
             }
 
             document.addEventListener("DOMContentLoaded", () => {
-                const loadButton = document.getElementById("entities-load-button");
                 const predictionsButton = document.getElementById("predictions-load-button");
-
-                if (loadButton) {
-                    loadButton.addEventListener("click", () => loadEntities());
-                }
+                const predictionsHistoryButton = document.getElementById("predictions-history-button");
 
                 if (predictionsButton) {
                     predictionsButton.addEventListener("click", () => loadPredictions());
                 }
 
+                if (predictionsHistoryButton) {
+                    predictionsHistoryButton.addEventListener("click", () => {
+                        alert("📊 История предсказаний за последние 7 дней:\n\n- Анализируется база данных Home Assistant\n- Выявляются паттерны по дням недели и часам\n- Рассчитывается вероятность для каждого устройства\n\nТекущая обновляется каждые 30 секунд");
+                    });
+                }
+
                 loadAddonHealth();
-                // автообновление состояния аддона раз в минуту
-                setInterval(loadAddonHealth, 60000);
+                // автообновление состояния аддона раз в 30 секунд
+                setInterval(loadAddonHealth, 30000);
 
                 // Автозагрузка predictions при загрузке страницы
                 loadPredictions();
@@ -719,7 +673,14 @@ app.MapGet("/", async context =>
 });
 
 // Простейший health-check для интеграции с HA / отладки
-app.MapGet("/health", () => Results.Json(new { status = "ok", runtime = ".NET 8", source = "diploma-addon" }));
+app.MapGet("/health", () => Results.Json(new { 
+    status = "ok", 
+    runtime = ".NET 8",
+    version = "0.1.10",
+    source = "diploma-addon",
+    python_service = "http://127.0.0.1:5000",
+    timestamp = DateTime.UtcNow.ToString("o")
+}));
 
 // API-эндпоинт для чтения сущностей Home Assistant через Supervisor API
 // Логически соответствует /api/states из REST API Home Assistant, но возвращает сжатый список состояний
