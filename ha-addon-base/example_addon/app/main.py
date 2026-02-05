@@ -8,7 +8,7 @@ from datetime import datetime
 import requests
 import aiohttp
 
-from ml_model import TimeSlotHabitModel, events_from_ha_states
+from ml_correlation import CorrelationAnalyzer, events_from_ha_history
 from config import get_config
 
 
@@ -29,8 +29,8 @@ app = Flask(__name__)
 last_events: list[dict] = []
 MAX_EVENTS = 20
 
-# ML модель для предсказаний
-ml_model = TimeSlotHabitModel(min_support=MODEL_MIN_SUPPORT, min_confidence=MODEL_MIN_CONFIDENCE)
+# ML модель для анализа корреляций и предсказания автоматизаций
+analyzer = CorrelationAnalyzer(min_confidence=MODEL_MIN_CONFIDENCE, min_support=MODEL_MIN_SUPPORT)
 
 print(f"[diploma_addon] Configuration: min_support={MODEL_MIN_SUPPORT}, min_confidence={MODEL_MIN_CONFIDENCE}, history_days={HISTORY_DAYS}, train_hour={TRAIN_HOUR}")
 
@@ -139,7 +139,7 @@ def get_config_endpoint():
 @app.route("/api/config/reload", methods=["POST"])
 def reload_config():
     """Reload configuration from /data/options.json."""
-    global MODEL_MIN_SUPPORT, MODEL_MIN_CONFIDENCE, HISTORY_DAYS, TRAIN_HOUR, ml_model
+    global MODEL_MIN_SUPPORT, MODEL_MIN_CONFIDENCE, HISTORY_DAYS, TRAIN_HOUR, analyzer
     try:
         cfg.reload()
         MODEL_MIN_SUPPORT = cfg.get("min_support")
@@ -147,10 +147,10 @@ def reload_config():
         HISTORY_DAYS = cfg.get("history_days")
         TRAIN_HOUR = cfg.get("train_hour")
         
-        # Recreate model with new parameters
-        ml_model = TimeSlotHabitModel(
-            min_support=MODEL_MIN_SUPPORT,
-            min_confidence=MODEL_MIN_CONFIDENCE
+        # Recreate analyzer with new parameters
+        analyzer = CorrelationAnalyzer(
+            min_confidence=MODEL_MIN_CONFIDENCE,
+            min_support=MODEL_MIN_SUPPORT
         )
         
         print(f"[diploma_addon] Config reloaded: min_support={MODEL_MIN_SUPPORT}, min_confidence={MODEL_MIN_CONFIDENCE}, history_days={HISTORY_DAYS}, train_hour={TRAIN_HOUR}")
@@ -172,6 +172,73 @@ def reload_config():
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
+@app.route("/api/automation-suggestions", methods=["GET"])
+def get_automation_suggestions():
+    """
+    Returns automation suggestions based on discovered patterns.
+    """
+    try:
+        global last_trained, training_in_progress
+
+        if training_in_progress:
+            return jsonify({"error": "training_in_progress", "status": "busy"}), 503
+
+        if last_trained is None:
+            return jsonify({
+                "error": "model_not_trained",
+                "status": "no_model",
+                "hint": "Call POST /api/train or wait for nightly training."
+            }), 409
+
+        suggestions = analyzer.get_suggestions(limit=20)
+        stats = analyzer.get_statistics()
+
+        return jsonify({
+            "timestamp": datetime.now().isoformat(),
+            "last_trained": last_trained.isoformat(),
+            "suggestions": suggestions,
+            "statistics": stats
+        }), 200
+    except Exception as e:
+        print(f"[diploma_addon] Error in automation suggestions: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e), "status": "error"}), 500
+
+
+@app.route("/api/patterns", methods=["GET"])
+def get_patterns():
+    """
+    Returns discovered temporal patterns.
+    """
+    try:
+        global last_trained, training_in_progress
+
+        if training_in_progress:
+            return jsonify({"error": "training_in_progress", "status": "busy"}), 503
+
+        if last_trained is None:
+            return jsonify({
+                "error": "model_not_trained",
+                "status": "no_model",
+                "hint": "Call POST /api/train or wait for nightly training."
+            }), 409
+
+        patterns = analyzer.get_patterns()
+
+        return jsonify({
+            "timestamp": datetime.now().isoformat(),
+            "last_trained": last_trained.isoformat(),
+            "patterns": patterns,
+            "total": len(patterns)
+        }), 200
+    except Exception as e:
+        print(f"[diploma_addon] Error in patterns: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e), "status": "error"}), 500
+
+
 @app.route("/api/predictions", methods=["POST"])
 def get_predictions():
     """
@@ -188,23 +255,14 @@ def get_predictions():
         if last_trained is None:
             return jsonify({"error": "model_not_trained", "status": "no_model", "hint": "Call /api/train or wait for nightly training."}), 409
 
-        predictions = ml_model.predict_for_datetime(now)
+        # Return automation suggestions instead (same data)
+        suggestions = analyzer.get_suggestions(limit=10)
 
         result = {
             "timestamp": now.isoformat(),
-            "weekday": now.weekday(),
-            "hour": now.hour,
-            "predictions": [
-                {
-                    "entity_id": p.entity_id,
-                    "state": p.state,
-                    "probability": round(p.probability, 3),
-                    "support": p.support
-                }
-                for p in predictions
+            "suggestions": suggestions,                for p in predictions
             ],
-            "total_predictions": len(predictions),
-            "data_source": "trained_model",
+            "last_trained": last_trained.isoformat(),
             "training_samples": last_training_samples
         }
 
@@ -270,41 +328,51 @@ def _fetch_history_from_ha():
 
 @app.route("/api/train", methods=["POST"])
 def train_now():
-    """Trigger training immediately: fetch history, convert to events, fit model."""
-    global training_in_progress, last_trained, last_training_samples, ml_model
+    """Trigger training immediately: fetch history, analyze correlations."""
+    global training_in_progress, last_trained, last_training_samples, analyzer
     if training_in_progress:
         return jsonify({"status": "busy", "message": "Training already in progress"}), 409
 
     training_in_progress = True
     start = datetime.now()
     try:
-        ha_states = _fetch_history_from_ha()
-        # include websocket recent events too
+        ha_history = _fetch_history_from_ha()
+        
+        # Add recent WebSocket events to training data
         if last_events:
             for event_data in last_events:
                 ev = event_data.get("event", {})
                 data = ev.get("data", {}) or {}
                 new_state = data.get("new_state")
                 if new_state:
-                    ha_states.append(new_state)
+                    ha_history.append(new_state)
 
-        events = events_from_ha_states(ha_states)
-        # reset model counts to avoid accumulating duplicates
-        ml_model = TimeSlotHabitModel(min_support=ml_model.min_support, min_confidence=ml_model.min_confidence)
+        # Convert to correlation events
+        events = events_from_ha_history(ha_history)
+        
+        # Create new analyzer and fit
+        analyzer = CorrelationAnalyzer(
+            min_confidence=MODEL_MIN_CONFIDENCE,
+            min_support=MODEL_MIN_SUPPORT
+        )
+        
         if events:
-            ml_model.fit(events)
+            analyzer.fit(events)
             last_training_samples = len(events)
         else:
             last_training_samples = 0
 
+        stats = analyzer.get_statistics()
         last_trained = datetime.now()
         duration = (last_trained - start).total_seconds()
         training_in_progress = False
+        
         return jsonify({
             "status": "ok",
             "trained_at": last_trained.isoformat(),
             "training_samples": last_training_samples,
-            "duration_seconds": duration
+            "duration_seconds": duration,
+            "analysis": stats
         }), 200
     except Exception as e:
         training_in_progress = False
