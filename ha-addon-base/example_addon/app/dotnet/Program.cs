@@ -952,12 +952,16 @@ app.MapGet("/api/patterns", async (IHttpClientFactory httpClientFactory) =>
     {
         var pythonClient = httpClientFactory.CreateClient("python");
         using var response = await pythonClient.GetAsync("api/patterns");
-        
+
         if (!response.IsSuccessStatusCode)
         {
             var errorBody = await response.Content.ReadAsStringAsync();
             return Results.Json(
-                new { error = "Failed to get patterns", status = (int)response.StatusCode },
+                new
+                {
+                    error = "Failed to get patterns",
+                    status = (int)response.StatusCode
+                },
                 statusCode: StatusCodes.Status502BadGateway
             );
         }
@@ -968,21 +972,17 @@ app.MapGet("/api/patterns", async (IHttpClientFactory httpClientFactory) =>
     catch (Exception ex)
     {
         return Results.Json(
-            new { error = ex.Message },
-            statusCode: StatusCodes.Status503ServiceUnavailable
-        );
-    }
-});
             new
             {
-                error = "Exception while calling Python predictions service",
+                error = "Exception while calling Python patterns service",
                 message = ex.Message
             },
-            statusCode: StatusCodes.Status500InternalServerError
+            statusCode: StatusCodes.Status503ServiceUnavailable
         );
     }
 });
 
 // Явно привязываемся к порту 8080, который уже прокинут в addon config.yaml
 app.Run("http://0.0.0.0:8080");
+
 
