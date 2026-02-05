@@ -1,5 +1,5 @@
 name: "Adaptive Home Automations addon"
-version: "0.1.7"
+version: "0.1.8"
 slug: "adaptive_home_automations_addon"
 description: "Adaptive Home Automations addon for diploma project"
 startup: services
