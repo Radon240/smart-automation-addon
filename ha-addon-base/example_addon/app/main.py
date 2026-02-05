@@ -229,5 +229,7 @@ if __name__ == "__main__":
     )
     listener_thread.start()
 
-    # Flask-приложение для ingress
-    app.run(host="0.0.0.0", port=8080)
+    # Flask-приложение для ML API (отдельный порт 5000)
+    # .NET приложение запущено на порте 8080 и вызывает этот API
+    print("[diploma_addon] Flask ML service starting on 127.0.0.1:5000...")
+    app.run(host="127.0.0.1", port=5000, debug=False)
