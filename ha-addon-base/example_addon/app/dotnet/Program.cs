@@ -607,7 +607,7 @@ app.MapGet("/", async context =>
                 errorBox.style.display = "none";
                 list.innerHTML = "";
 
-                // Показываем информацию об обновлении
+                // Показываем информацию об обновлении и источнике данных
                 if (predictionsSnapshot.timestamp) {
                     const ts = new Date(predictionsSnapshot.timestamp);
                     const timeStr = ts.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -617,7 +617,21 @@ app.MapGet("/", async context =>
                     infoDiv.style.marginBottom = "0.5rem";
                     infoDiv.style.paddingBottom = "0.5rem";
                     infoDiv.style.borderBottom = "1px solid rgba(55, 65, 81, 0.5)";
-                    infoDiv.textContent = "⏰ Обновлено в " + timeStr + " | Вероятность выше 40%";
+                    
+                    let infoText = "⏰ Обновлено в " + timeStr;
+                    
+                    // Добавляем информацию об источнике данных
+                    if (predictionsSnapshot.data_source) {
+                        infoText += " | 📊 Источник: " + predictionsSnapshot.data_source;
+                    }
+                    
+                    // Добавляем информацию о количестве образцов обучения
+                    if (predictionsSnapshot.training_samples) {
+                        infoText += " | 📈 Образцы: " + predictionsSnapshot.training_samples;
+                    }
+                    
+                    infoText += " | Вероятность > 40%";
+                    infoDiv.textContent = infoText;
                     list.appendChild(infoDiv);
                 }
 

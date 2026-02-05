@@ -118,10 +118,17 @@ def get_predictions():
         # Получаем текущую дату и время
         now = datetime.now()
         
-        # Если у нас есть сохранённые события, тренируем модель на них
+        # Собираем данные из разных источников
+        ha_states = []
+        
+        # 1. Сначала получаем полную историю из Home Assistant REST API (последние 7 дней)
+        history_states = _fetch_history_from_ha()
+        if history_states:
+            ha_states.extend(history_states)
+            print(f"[diploma_addon] Loaded {len(history_states)} history states from Home Assistant")
+        
+        # 2. Добавляем последние события из WebSocket (если есть, для самых новых данных)
         if last_events:
-            # Преобразуем события HA в формат для модели
-            ha_states = []
             for event_data in last_events:
                 ev = event_data.get("event", {})
                 data = ev.get("data", {}) or {}
@@ -129,11 +136,14 @@ def get_predictions():
                 
                 if new_state:
                     ha_states.append(new_state)
-            
-            # Преобразуем в Event объекты
+            print(f"[diploma_addon] Added {len(last_events)} recent WebSocket events")
+        
+        # Преобразуем в Event объекты для модели
+        if ha_states:
             events = events_from_ha_states(ha_states)
+            print(f"[diploma_addon] Converted to {len(events)} Event objects for ML model")
             
-            # Тренируем модель
+            # Тренируем модель на всех собранных данных
             if events:
                 ml_model.fit(events)
         
@@ -154,16 +164,73 @@ def get_predictions():
                 }
                 for p in predictions
             ],
-            "total_predictions": len(predictions)
+            "total_predictions": len(predictions),
+            "data_source": "home_assistant_history + websocket_events",
+            "training_samples": len(events) if ha_states else 0
         }
         
+        print(f"[diploma_addon] Generated {len(predictions)} predictions")
         return jsonify(result), 200
     except Exception as e:
         print(f"[diploma_addon] Error in predictions endpoint: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             "error": str(e),
             "status": "error"
         }), 500
+
+
+def _fetch_history_from_ha():
+    """
+    Получает историю состояний сущностей из Home Assistant REST API.
+    Запрашивает последние 7 дней для всех сущностей.
+    """
+    if not SUPERVISOR_TOKEN:
+        print("[diploma_addon] SUPERVISOR_TOKEN not set, skipping history fetch")
+        return []
+    
+    try:
+        # Используем REST API Home Assistant для получения истории
+        # /api/history/period?start_time=...&end_time=...
+        from datetime import timedelta
+        
+        end_time = datetime.now()
+        start_time = end_time - timedelta(days=7)  # Последние 7 дней
+        
+        url = f"{SUPERVISOR_API_URL}/history/period?start_time={start_time.isoformat()}&end_time={end_time.isoformat()}"
+        
+        headers = {"Authorization": f"Bearer {SUPERVISOR_TOKEN}"}
+        
+        print(f"[diploma_addon] Fetching history from {start_time.date()} to {end_time.date()}...")
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            print(f"[diploma_addon] Failed to fetch history: {response.status_code}")
+            return []
+        
+        # Home Assistant возвращает список списков (по одному списку на сущность)
+        # Каждый элемент - это объект состояния с полями: entity_id, state, last_changed, attributes
+        all_history = response.json()
+        
+        # Сглаживаем структуру - объединяем все состояния из всех сущностей
+        flattened = []
+        for entity_history in all_history:
+            if isinstance(entity_history, list):
+                flattened.extend(entity_history)
+        
+        print(f"[diploma_addon] Fetched {len(flattened)} historical states")
+        return flattened
+        
+    except requests.exceptions.RequestException as e:
+        print(f"[diploma_addon] Error fetching history from Home Assistant: {e}")
+        return []
+    except Exception as e:
+        print(f"[diploma_addon] Unexpected error in _fetch_history_from_ha: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
 
 
 async def _listen_events_loop():
