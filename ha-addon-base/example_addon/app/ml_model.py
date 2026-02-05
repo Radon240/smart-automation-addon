@@ -19,7 +19,7 @@ in the diploma text as:
 from dataclasses import dataclass
 from datetime import datetime
 from collections import defaultdict
-from typing import Dict, Iterable, List, Tuple, Any
+from typing import Dict, Iterable, List, Tuple, Any, Optional
 
 
 @dataclass
@@ -54,19 +54,22 @@ class TimeSlotHabitModel:
 
     def __init__(
         self,
-        active_state: str = "on",
+        active_state: Optional[str] = None,
         min_support: int = 5,
         min_confidence: float = 0.6,
     ) -> None:
+        # If active_state is None the model will consider ALL event labels
+        # (transitions, numeric/attribute changes, etc.). Keeping the
+        # parameter for backward compatibility.
         self.active_state = active_state
         self.min_support = min_support
         self.min_confidence = min_confidence
 
-        # (weekday, hour) -> entity_id -> count
-        self._slot_entity_counts: Dict[Tuple[int, int], Dict[str, int]] = defaultdict(
-            lambda: defaultdict(int)
+        # (weekday, hour) -> entity_id -> label -> count
+        self._slot_entity_label_counts: Dict[Tuple[int, int], Dict[str, Dict[str, int]]] = defaultdict(
+            lambda: defaultdict(lambda: defaultdict(int))
         )
-        # (weekday, hour) -> total "active" events
+        # (weekday, hour) -> total events considered
         self._slot_totals: Dict[Tuple[int, int], int] = defaultdict(int)
 
     def fit(self, events: Iterable[Event]) -> None:
@@ -77,11 +80,15 @@ class TimeSlotHabitModel:
         actions (e.g. light turned on).
         """
         for ev in events:
-            if ev.state != self.active_state:
+            # If an explicit active_state is configured, only that label
+            # is considered "positive" as before. Otherwise accept all
+            # event labels (transitions, numeric changes, attributes).
+            if self.active_state is not None and ev.state != self.active_state:
                 continue
 
             slot = (ev.timestamp.weekday(), ev.timestamp.hour)
-            self._slot_entity_counts[slot][ev.entity_id] += 1
+            label = ev.state
+            self._slot_entity_label_counts[slot][ev.entity_id][label] += 1
             self._slot_totals[slot] += 1
 
     def predict_for_datetime(self, when: datetime) -> List[PredictedAction]:
@@ -96,17 +103,20 @@ class TimeSlotHabitModel:
             return []
 
         result: List[PredictedAction] = []
-        for entity_id, count in self._slot_entity_counts[slot].items():
-            prob = count / total
-            if count >= self.min_support and prob >= self.min_confidence:
-                result.append(
-                    PredictedAction(
-                        entity_id=entity_id,
-                        state=self.active_state,
-                        probability=prob,
-                        support=count,
+        # For each entity and each observed label compute probability
+        entity_map = self._slot_entity_label_counts.get(slot, {})
+        for entity_id, labels in entity_map.items():
+            for label, count in labels.items():
+                prob = count / total
+                if count >= self.min_support and prob >= self.min_confidence:
+                    result.append(
+                        PredictedAction(
+                            entity_id=entity_id,
+                            state=label,
+                            probability=prob,
+                            support=count,
+                        )
                     )
-                )
 
         # Sort most confident and well-supported actions first
         result.sort(key=lambda x: (x.probability, x.support), reverse=True)
@@ -115,7 +125,7 @@ class TimeSlotHabitModel:
 
 def events_from_ha_states(
     ha_states: Iterable[Dict[str, Any]],
-    accepted_domains: Iterable[str] = ("light", "switch", "climate"),
+    accepted_domains: Optional[Iterable[str]] = None,
 ) -> List[Event]:
     """
     Helper: convert raw Home Assistant /api/states entries to Event objects.
@@ -128,28 +138,83 @@ def events_from_ha_states(
         "attributes": { ... }
       }
 
-    Only entities whose domain is in `accepted_domains` are kept.
-    """
-    domains = set(accepted_domains)
-    result: List[Event] = []
+    By default this function will include all domains and attempt to
+    generate higher-level event labels for the model:
+      - transition:off->on (discrete state changes)
+      - numeric:state:up / numeric:state:down (when the entity state is numeric)
+      - attr:<name>:up / attr:<name>:down for numeric attribute changes
 
+    This keeps the core model agnostic and allows it to learn both
+    discrete and numeric patterns.
+    """
+    # Group raw states by entity and sort chronologically
+    by_entity: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for raw in ha_states:
         entity_id = str(raw.get("entity_id") or "").strip()
         if not entity_id or "." not in entity_id:
             continue
 
-        domain = entity_id.split(".", 1)[0]
-        if domain not in domains:
-            continue
-
-        state = str(raw.get("state") or "").strip()
         ts_raw = raw.get("last_changed") or raw.get("last_updated") or ""
         try:
             ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
         except Exception:
             continue
 
-        result.append(Event(entity_id=entity_id, state=state, timestamp=ts))
+        entry = {
+            "entity_id": entity_id,
+            "state": str(raw.get("state") or "").strip(),
+            "attributes": raw.get("attributes") or {},
+            "ts": ts,
+        }
+        by_entity[entity_id].append(entry)
+
+    result: List[Event] = []
+
+    def _try_float(x: Any) -> Optional[float]:
+        try:
+            return float(x)
+        except Exception:
+            return None
+
+    for entity_id, entries in by_entity.items():
+        # sort by timestamp ascending
+        entries.sort(key=lambda x: x["ts"])
+        for i in range(1, len(entries)):
+            prev = entries[i - 1]
+            curr = entries[i]
+            prev_state = prev["state"]
+            curr_state = curr["state"]
+
+            # Prefer numeric interpretation of the main state where possible
+            prev_num = _try_float(prev_state)
+            curr_num = _try_float(curr_state)
+            if prev_num is not None and curr_num is not None:
+                delta = curr_num - prev_num
+                if abs(delta) > 1e-6:
+                    direction = "up" if delta > 0 else "down"
+                    label = f"numeric:state:{direction}:{round(delta,3)}"
+                    result.append(Event(entity_id=entity_id, state=label, timestamp=curr["ts"]))
+                # numeric state handled, skip textual transition
+            else:
+                # Non-numeric state transitions (e.g. off -> on)
+                if prev_state != curr_state:
+                    label = f"transition:{prev_state}->{curr_state}"
+                    result.append(Event(entity_id=entity_id, state=label, timestamp=curr["ts"]))
+
+            # Also check numeric attribute changes (common for thermostats, sensors)
+            prev_attrs = prev.get("attributes") or {}
+            curr_attrs = curr.get("attributes") or {}
+            common_keys = set(prev_attrs.keys()) & set(curr_attrs.keys())
+            for key in common_keys:
+                pval = _try_float(prev_attrs.get(key))
+                cval = _try_float(curr_attrs.get(key))
+                if pval is None or cval is None:
+                    continue
+                delta = cval - pval
+                if abs(delta) > 1e-6:
+                    direction = "up" if delta > 0 else "down"
+                    label = f"attr:{key}:{direction}:{round(delta,3)}"
+                    result.append(Event(entity_id=entity_id, state=label, timestamp=curr["ts"]))
 
     return result
 
