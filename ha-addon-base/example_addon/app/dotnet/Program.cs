@@ -382,6 +382,19 @@ app.MapGet("/", async context =>
                 font-size: 0.8rem;
                 color: #9ca3af;
             }
+            @keyframes spin {
+                from { transform: rotate(0deg); }
+                to { transform: rotate(360deg); }
+            }
+            .spinner {
+                display: inline-block;
+                width: 0.6rem;
+                height: 0.6rem;
+                border: 2px solid rgba(168, 85, 247, 0.3);
+                border-top-color: rgba(168, 85, 247, 0.8);
+                border-radius: 999px;
+                animation: spin 1s linear infinite;
+            }
         </style>
     </head>
     <body>
@@ -446,16 +459,16 @@ app.MapGet("/", async context =>
                     <div class="card predictions-card">
                         <div class="predictions-header">
                             <h3 style="margin:0; font-size:0.85rem; letter-spacing:0.03em; text-transform:uppercase; color:#9ca3af;">
-                                Predicted actions
+                                Predicted actions <span style="font-size:0.7rem; color:#6b7280;">(обновляется каждые 30 сек)</span>
                             </h3>
                             <div style="display:flex; align-items:center; gap:0.5rem;">
-                                <button id="predictions-load-button" type="button" class="entities-button">Анализировать</button>
+                                <button id="predictions-load-button" type="button" class="entities-button">Обновить сейчас</button>
                                 <span id="predictions-count" class="predictions-badge">idle</span>
                             </div>
                         </div>
                         <div id="predictions-error" class="predictions-error" style="display:none;"></div>
                         <div id="predictions-list" class="predictions-list">
-                            <div class="predictions-loading">Нажмите &laquo;Анализировать&raquo;, чтобы получить предсказания на основе истории.</div>
+                            <div class="predictions-loading">Анализируем историю...</div>
                         </div>
                     </div>
                 </section>
@@ -594,8 +607,22 @@ app.MapGet("/", async context =>
                 errorBox.style.display = "none";
                 list.innerHTML = "";
 
+                // Показываем информацию об обновлении
+                if (predictionsSnapshot.timestamp) {
+                    const ts = new Date(predictionsSnapshot.timestamp);
+                    const timeStr = ts.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+                    const infoDiv = document.createElement("div");
+                    infoDiv.style.fontSize = "0.75rem";
+                    infoDiv.style.color = "#9ca3af";
+                    infoDiv.style.marginBottom = "0.5rem";
+                    infoDiv.style.paddingBottom = "0.5rem";
+                    infoDiv.style.borderBottom = "1px solid rgba(55, 65, 81, 0.5)";
+                    infoDiv.textContent = "⏰ Обновлено в " + timeStr + " | Вероятность выше 40%";
+                    list.appendChild(infoDiv);
+                }
+
                 if (predictions.length === 0) {
-                    list.innerHTML = '<div class="predictions-loading">Нет предсказаний для текущего времени</div>';
+                    list.innerHTML += '<div class="predictions-loading">Нет предсказаний для текущего времени</div>';
                     return;
                 }
 
@@ -621,8 +648,10 @@ app.MapGet("/", async context =>
                 if (!list || !countBadge || !errorBox) return;
 
                 try {
-                    countBadge.textContent = "анализ...";
-                    list.innerHTML = '<div class="predictions-loading">Анализируем историю...</div>';
+                    // Показываем индикатор загрузки
+                    const spinner = '<span class="spinner" style="margin-right:0.4rem;"></span>';
+                    countBadge.innerHTML = spinner + 'загрузка...';
+                    errorBox.style.display = "none";
 
                     const resp = await fetch("./api/predictions", { method: "POST" });
                     if (!resp.ok) {
@@ -660,6 +689,12 @@ app.MapGet("/", async context =>
                 loadAddonHealth();
                 // автообновление состояния аддона раз в минуту
                 setInterval(loadAddonHealth, 60000);
+
+                // Автозагрузка predictions при загрузке страницы
+                loadPredictions();
+
+                // Автообновление predictions каждые 30 секунд (в реальном времени)
+                setInterval(loadPredictions, 30000);
             });
         </script>
     </body>
