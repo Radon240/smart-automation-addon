@@ -850,6 +850,59 @@ app.MapGet("/api/states", async (IHttpClientFactory httpClientFactory, string? d
     }
 });
 
+// Proxy endpoint to trigger training on the Python service
+app.MapPost("/api/train", async (IHttpClientFactory httpClientFactory) =>
+{
+    try
+    {
+        var pythonClient = httpClientFactory.CreateClient("python");
+
+        using var response = await pythonClient.PostAsync("api/train",
+            new StringContent("{}", System.Text.Encoding.UTF8, "application/json"));
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync();
+            return Results.Json(
+                new
+                {
+                    error = "Failed to trigger training on Python service",
+                    status = (int)response.StatusCode,
+                    details = errorBody
+                },
+                statusCode: StatusCodes.Status502BadGateway
+            );
+        }
+
+        var content = await response.Content.ReadAsStringAsync();
+        var doc = JsonDocument.Parse(content);
+        return Results.Json(doc.RootElement);
+    }
+    catch (HttpRequestException ex)
+    {
+        return Results.Json(
+            new
+            {
+                error = "Failed to connect to Python service",
+                message = ex.Message,
+                hint = "Ensure Python Flask service is running and PYTHON_API_URL is configured"
+            },
+            statusCode: StatusCodes.Status503ServiceUnavailable
+        );
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(
+            new
+            {
+                error = "Exception while calling Python training service",
+                message = ex.Message
+            },
+            statusCode: StatusCodes.Status500InternalServerError
+        );
+    }
+});
+
 // API-эндпоинт для получения предсказаний из Python ML модели
 // POST /api/predictions - вызывает Python модель для анализа истории и предсказания действий
 app.MapPost("/api/predictions", async (IHttpClientFactory httpClientFactory) =>
