@@ -24,6 +24,10 @@ MAX_EVENTS = 20
 # ML модель для предсказаний
 ml_model = TimeSlotHabitModel(min_support=2, min_confidence=0.4)
 
+# Статус обучения
+last_trained = None
+training_in_progress = False
+last_training_samples = 0
 
 @app.route("/")
 def index():
@@ -111,46 +115,21 @@ def health():
 @app.route("/api/predictions", methods=["POST"])
 def get_predictions():
     """
-    API endpoint для получения предсказаний на основе истории событий Home Assistant.
-    Вызывается из .NET addon для анализа привычек и предложения автоматизаций.
+    Возвращает предсказания по последней обученной модели.
+    Не выполняет обучение — для этого есть /api/train.
     """
     try:
-        # Получаем текущую дату и время
         now = datetime.now()
-        
-        # Собираем данные из разных источников
-        ha_states = []
-        
-        # 1. Сначала получаем полную историю из Home Assistant REST API (последние 7 дней)
-        history_states = _fetch_history_from_ha()
-        if history_states:
-            ha_states.extend(history_states)
-            print(f"[diploma_addon] Loaded {len(history_states)} history states from Home Assistant")
-        
-        # 2. Добавляем последние события из WebSocket (если есть, для самых новых данных)
-        if last_events:
-            for event_data in last_events:
-                ev = event_data.get("event", {})
-                data = ev.get("data", {}) or {}
-                new_state = data.get("new_state")
-                
-                if new_state:
-                    ha_states.append(new_state)
-            print(f"[diploma_addon] Added {len(last_events)} recent WebSocket events")
-        
-        # Преобразуем в Event объекты для модели
-        if ha_states:
-            events = events_from_ha_states(ha_states)
-            print(f"[diploma_addon] Converted to {len(events)} Event objects for ML model")
-            
-            # Тренируем модель на всех собранных данных
-            if events:
-                ml_model.fit(events)
-        
-        # Получаем предсказания для текущего времени
+        global last_trained, training_in_progress, last_training_samples
+
+        if training_in_progress:
+            return jsonify({"error": "training_in_progress", "status": "busy"}), 503
+
+        if last_trained is None:
+            return jsonify({"error": "model_not_trained", "status": "no_model", "hint": "Call /api/train or wait for nightly training."}), 409
+
         predictions = ml_model.predict_for_datetime(now)
-        
-        # Форматируем ответ
+
         result = {
             "timestamp": now.isoformat(),
             "weekday": now.weekday(),
@@ -165,20 +144,16 @@ def get_predictions():
                 for p in predictions
             ],
             "total_predictions": len(predictions),
-            "data_source": "home_assistant_history + websocket_events",
-            "training_samples": len(events) if ha_states else 0
+            "data_source": "trained_model",
+            "training_samples": last_training_samples
         }
-        
-        print(f"[diploma_addon] Generated {len(predictions)} predictions")
+
         return jsonify(result), 200
     except Exception as e:
         print(f"[diploma_addon] Error in predictions endpoint: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({
-            "error": str(e),
-            "status": "error"
-        }), 500
+        return jsonify({"error": str(e), "status": "error"}), 500
 
 
 def _fetch_history_from_ha():
@@ -231,6 +206,73 @@ def _fetch_history_from_ha():
         import traceback
         traceback.print_exc()
         return []
+
+
+@app.route("/api/train", methods=["POST"])
+def train_now():
+    """Trigger training immediately: fetch history, convert to events, fit model."""
+    global training_in_progress, last_trained, last_training_samples, ml_model
+    if training_in_progress:
+        return jsonify({"status": "busy", "message": "Training already in progress"}), 409
+
+    training_in_progress = True
+    start = datetime.now()
+    try:
+        ha_states = _fetch_history_from_ha()
+        # include websocket recent events too
+        if last_events:
+            for event_data in last_events:
+                ev = event_data.get("event", {})
+                data = ev.get("data", {}) or {}
+                new_state = data.get("new_state")
+                if new_state:
+                    ha_states.append(new_state)
+
+        events = events_from_ha_states(ha_states)
+        # reset model counts to avoid accumulating duplicates
+        ml_model = TimeSlotHabitModel(min_support=ml_model.min_support, min_confidence=ml_model.min_confidence)
+        if events:
+            ml_model.fit(events)
+            last_training_samples = len(events)
+        else:
+            last_training_samples = 0
+
+        last_trained = datetime.now()
+        duration = (last_trained - start).total_seconds()
+        training_in_progress = False
+        return jsonify({
+            "status": "ok",
+            "trained_at": last_trained.isoformat(),
+            "training_samples": last_training_samples,
+            "duration_seconds": duration
+        }), 200
+    except Exception as e:
+        training_in_progress = False
+        print(f"[diploma_addon] Training error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+def _nightly_trainer_thread():
+    """Background thread that runs training once a day at configured hour."""
+    import time
+    from datetime import timedelta
+    hour = int(os.getenv("TRAIN_HOUR", "3"))
+    print(f"[diploma_addon] Nightly trainer started, will run at hour {hour}")
+    while True:
+        now = datetime.now()
+        run_at = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if run_at <= now:
+            run_at = run_at + timedelta(days=1)
+        wait_seconds = (run_at - now).total_seconds()
+        time.sleep(wait_seconds)
+        try:
+            print("[diploma_addon] Running scheduled training...")
+            # perform training synchronously
+            train_now()
+        except Exception as e:
+            print(f"[diploma_addon] Nightly training failed: {e}")
 
 
 async def _listen_events_loop():
@@ -295,6 +337,10 @@ if __name__ == "__main__":
         target=start_event_listener_thread, name="ha-events-listener", daemon=True
     )
     listener_thread.start()
+
+    # Запускаем фоновый ночной тренер (daemon)
+    trainer_thread = threading.Thread(target=_nightly_trainer_thread, name="nightly-trainer", daemon=True)
+    trainer_thread.start()
 
     # Flask-приложение для ML API (отдельный порт 5000)
     # .NET приложение запущено на порте 8080 и вызывает этот API

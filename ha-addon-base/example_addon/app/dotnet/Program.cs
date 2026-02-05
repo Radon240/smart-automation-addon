@@ -430,6 +430,7 @@ app.MapGet("/", async context =>
                     <div style="display:flex; gap:0.5rem; margin-bottom:1rem;">
                         <button id="predictions-load-button" type="button" class="entities-button">🔄 Обновить сейчас</button>
                         <button id="predictions-history-button" type="button" class="entities-button">📊 История (7 дней)</button>
+                        <button id="predictions-train-button" type="button" class="entities-button">🚀 Train now</button>
                     </div>
                     
                     <div class="predictions-header" style="margin-bottom:1rem; padding:0.75rem; background:rgba(15,23,42,0.5); border-radius:0.5rem; border:1px solid rgba(55,65,81,0.5);">
@@ -640,9 +641,48 @@ app.MapGet("/", async context =>
                 }
             }
 
+            async function trainModel() {
+                const trainButton = document.getElementById("predictions-train-button");
+                const trainingInfo = document.getElementById("predictions-training");
+                const errorBox = document.getElementById("predictions-error");
+                if (!trainButton || !trainingInfo || !errorBox) return;
+
+                try {
+                    trainButton.disabled = true;
+                    trainingInfo.textContent = 'training...';
+                    errorBox.style.display = 'none';
+
+                    const resp = await fetch('./api/train', { method: 'POST' });
+                    if (!resp.ok) {
+                        const text = await resp.text();
+                        errorBox.style.display = 'block';
+                        errorBox.textContent = 'Failed to start training: ' + resp.status + ' ' + text;
+                        trainingInfo.textContent = '-';
+                        trainButton.disabled = false;
+                        return;
+                    }
+
+                    const data = await resp.json();
+                    if (data.status === 'ok') {
+                        trainingInfo.textContent = (data.training_samples ?? 0) + ' образцов';
+                        // сразу обновим predictions после тренировки
+                        await loadPredictions();
+                    } else {
+                        errorBox.style.display = 'block';
+                        errorBox.textContent = 'Training failed: ' + JSON.stringify(data);
+                    }
+                } catch (err) {
+                    errorBox.style.display = 'block';
+                    errorBox.textContent = 'Exception while training: ' + err;
+                } finally {
+                    trainButton.disabled = false;
+                }
+            }
+
             document.addEventListener("DOMContentLoaded", () => {
                 const predictionsButton = document.getElementById("predictions-load-button");
                 const predictionsHistoryButton = document.getElementById("predictions-history-button");
+                const predictionsTrainButton = document.getElementById("predictions-train-button");
 
                 if (predictionsButton) {
                     predictionsButton.addEventListener("click", () => loadPredictions());
@@ -652,6 +692,10 @@ app.MapGet("/", async context =>
                     predictionsHistoryButton.addEventListener("click", () => {
                         alert("📊 История предсказаний за последние 7 дней:\n\n- Анализируется база данных Home Assistant\n- Выявляются паттерны по дням недели и часам\n- Рассчитывается вероятность для каждого устройства\n\nТекущая обновляется каждые 30 секунд");
                     });
+                }
+
+                if (predictionsTrainButton) {
+                    predictionsTrainButton.addEventListener("click", () => trainModel());
                 }
 
                 loadAddonHealth();
