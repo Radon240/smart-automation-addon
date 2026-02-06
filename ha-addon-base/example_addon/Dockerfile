@@ -1,10 +1,12 @@
 ARG BUILD_FROM
-FROM $BUILD_FROM
+FROM ${BUILD_FROM}
 
-# Базовые зависимости: Python (на будущее) + .NET SDK/Runtime для web-приложения
+# Базовые зависимости: Python + .NET SDK
 RUN apk add --no-cache \
     python3 \
     py3-pip \
+    python3-dev \
+    build-base \
     icu-libs \
     libgcc \
     libstdc++ \
@@ -15,10 +17,10 @@ WORKDIR /src
 COPY app/dotnet/ ./dotnet/
 RUN dotnet publish ./dotnet/DiplomaAddon.csproj -c Release -o /app/dotnet_out
 
-# Python-зависимости (пока не используются, но оставляем как основу под модели)
+# Python-зависимости
 WORKDIR /app
 COPY app/requirements.txt .
-RUN pip3 install  -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Остальной код и скрипт запуска
 COPY app/ /app/
