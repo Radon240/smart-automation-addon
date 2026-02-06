@@ -260,8 +260,7 @@ def get_predictions():
 
         result = {
             "timestamp": now.isoformat(),
-            "suggestions": suggestions,                for p in predictions
-            ],
+            "suggestions": suggestions,
             "last_trained": last_trained.isoformat(),
             "training_samples": last_training_samples
         }
