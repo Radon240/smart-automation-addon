@@ -46,6 +46,9 @@ print(f"[diploma_addon] Time Series Analyzer initialized. ARIMA available: {time
 last_trained = None
 training_in_progress = False
 last_training_samples = 0
+training_progress = 0  # 0-100%
+training_status_message = "Ready"
+training_current_step = ""
 
 @app.route("/")
 def index():
@@ -234,7 +237,7 @@ def health():
 
 @app.route("/api/config", methods=["GET"])
 def get_config_endpoint():
-    """Return current model configuration."""
+    """Return current model configuration and training status."""
     return jsonify({
         "min_support": MODEL_MIN_SUPPORT,
         "min_confidence": MODEL_MIN_CONFIDENCE,
@@ -242,6 +245,9 @@ def get_config_endpoint():
         "train_hour": TRAIN_HOUR,
         "last_trained": last_trained.isoformat() if last_trained else None,
         "training_in_progress": training_in_progress,
+        "training_progress": training_progress,
+        "training_status": training_status_message,
+        "training_step": training_current_step,
         "last_training_samples": last_training_samples
     }), 200
 
@@ -494,16 +500,28 @@ def train_advanced_models():
     Train both correlation analyzer and time series models.
     """
     global training_in_progress, last_trained, last_training_samples, analyzer
+    global training_progress, training_status_message, training_current_step
 
     if training_in_progress:
         return jsonify({"status": "busy", "message": "Training already in progress"}), 409
 
     training_in_progress = True
+    training_progress = 0
+    training_status_message = "Starting advanced training..."
+    training_current_step = "Initialization"
     start = datetime.now()
 
     try:
         # Train correlation analyzer (existing functionality)
+        training_current_step = "Fetching history data"
+        training_progress = 10
+        training_status_message = "Fetching historical data from Home Assistant"
+
         ha_history = _fetch_history_from_ha()
+
+        training_current_step = "Processing events"
+        training_progress = 20
+        training_status_message = "Processing and converting events"
 
         if last_events:
             for event_data in last_events:
@@ -514,6 +532,10 @@ def train_advanced_models():
                     ha_history.append(new_state)
 
         events = events_from_ha_history(ha_history)
+
+        training_current_step = "Training correlation analyzer"
+        training_progress = 30
+        training_status_message = "Training correlation analysis model"
 
         analyzer = CorrelationAnalyzer(
             min_confidence=MODEL_MIN_CONFIDENCE,
@@ -529,9 +551,18 @@ def train_advanced_models():
         # Train time series models for all numeric entities using ARIMA
         time_series_results = []
         unique_entities = set(e.get('entity_id') for e in ha_history if 'entity_id' in e)
+        total_entities = len(unique_entities)
+        entities_processed = 0
 
-        for entity_id in unique_entities:
+        training_current_step = "Training time series models"
+        training_progress = 40
+        training_status_message = f"Training ARIMA models for {total_entities} entities"
+
+        for i, entity_id in enumerate(unique_entities):
             try:
+                training_status_message = f"Training ARIMA model for {entity_id} ({i+1}/{total_entities})"
+                training_progress = 40 + int((i / total_entities) * 50)
+
                 # Train ARIMA model
                 arima_result = time_series_analyzer.analyze_entity_timeseries(
                     ha_history, entity_id, frequency='1H'
@@ -552,6 +583,8 @@ def train_advanced_models():
                         'reason': 'insufficient_data'
                     })
 
+                entities_processed += 1
+
             except Exception as e:
                 time_series_results.append({
                     'entity_id': entity_id,
@@ -559,11 +592,19 @@ def train_advanced_models():
                     'status': 'error',
                     'error': str(e)
                 })
+                entities_processed += 1
+
+        training_current_step = "Finalizing training"
+        training_progress = 95
+        training_status_message = "Finalizing training and calculating statistics"
 
         # Update training status
         last_trained = datetime.now()
         duration = (last_trained - start).total_seconds()
         training_in_progress = False
+        training_progress = 100
+        training_status_message = "Advanced training completed successfully"
+        training_current_step = ""
 
         # Get statistics from both analyzers
         correlation_stats = analyzer.get_statistics()
@@ -585,6 +626,9 @@ def train_advanced_models():
 
     except Exception as e:
         training_in_progress = False
+        training_progress = 0
+        training_status_message = f"Advanced training failed: {str(e)}"
+        training_current_step = ""
         print(f"[diploma_addon] Advanced training error: {e}")
         import traceback
         traceback.print_exc()
@@ -647,14 +691,28 @@ def _fetch_history_from_ha():
 def train_now():
     """Trigger training immediately: fetch history, analyze correlations."""
     global training_in_progress, last_trained, last_training_samples, analyzer
+    global training_progress, training_status_message, training_current_step
+
     if training_in_progress:
         return jsonify({"status": "busy", "message": "Training already in progress"}), 409
 
     training_in_progress = True
+    training_progress = 0
+    training_status_message = "Starting training..."
+    training_current_step = "Initialization"
     start = datetime.now()
+
     try:
+        training_current_step = "Fetching history data"
+        training_progress = 10
+        training_status_message = "Fetching historical data from Home Assistant"
+
         ha_history = _fetch_history_from_ha()
-        
+
+        training_current_step = "Processing events"
+        training_progress = 30
+        training_status_message = "Processing and converting events"
+
         # Add recent WebSocket events to training data
         if last_events:
             for event_data in last_events:
@@ -666,24 +724,36 @@ def train_now():
 
         # Convert to correlation events
         events = events_from_ha_history(ha_history)
-        
+
+        training_current_step = "Training correlation analyzer"
+        training_progress = 60
+        training_status_message = "Training correlation analysis model"
+
         # Create new analyzer and fit
         analyzer = CorrelationAnalyzer(
             min_confidence=MODEL_MIN_CONFIDENCE,
             min_support=MODEL_MIN_SUPPORT
         )
-        
+
         if events:
             analyzer.fit(events)
             last_training_samples = len(events)
         else:
             last_training_samples = 0
 
+        training_current_step = "Finalizing model"
+        training_progress = 90
+        training_status_message = "Finalizing training and calculating statistics"
+
         stats = analyzer.get_statistics()
         last_trained = datetime.now()
         duration = (last_trained - start).total_seconds()
+
         training_in_progress = False
-        
+        training_progress = 100
+        training_status_message = "Training completed successfully"
+        training_current_step = ""
+
         return jsonify({
             "status": "ok",
             "trained_at": last_trained.isoformat(),
@@ -693,6 +763,9 @@ def train_now():
         }), 200
     except Exception as e:
         training_in_progress = False
+        training_progress = 0
+        training_status_message = f"Training failed: {str(e)}"
+        training_current_step = ""
         print(f"[diploma_addon] Training error: {e}")
         import traceback
         traceback.print_exc()

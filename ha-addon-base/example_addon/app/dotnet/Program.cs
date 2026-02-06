@@ -405,6 +405,45 @@ app.MapGet("/", async context =>
                 border-radius: 999px;
                 animation: spin 1s linear infinite;
             }
+
+            /* Training Status Indicator Styles */
+            .training-status {
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                background: rgba(15, 23, 42, 0.95);
+                border: 1px solid rgba(56, 189, 248, 0.7);
+                border-radius: 0.75rem;
+                padding: 1rem;
+                z-index: 1000;
+                min-width: 300px;
+                box-shadow:
+                    0 14px 40px rgba(34, 197, 94, 0.2),
+                    0 0 0 1px rgba(15, 23, 42, 0.7);
+            }
+
+            .training-progress-bar-container {
+                width: 100%;
+                height: 6px;
+                background: rgba(55, 65, 81, 0.9);
+                border-radius: 999px;
+                margin-bottom: 0.5rem;
+                overflow: hidden;
+            }
+
+            .training-progress-bar {
+                height: 100%;
+                background: linear-gradient(90deg, #38bdf8, #818cf8);
+                border-radius: 999px;
+                transition: width 0.3s ease;
+            }
+
+            .training-progress-text {
+                font-size: 0.8rem;
+                color: #e5e7eb;
+                text-align: center;
+                min-height: 1.2rem;
+            }
         </style>
     </head>
     <body>
@@ -438,12 +477,20 @@ app.MapGet("/", async context =>
                         Рекомендации по автоматизации на основе анализа паттернов поведения (корреляции и временные закономерности)
                     </div>
                     
-                    <div style="display:flex; gap:0.5rem; margin-bottom:1rem; flex-wrap:wrap;">
-                        <button id="suggestions-load-button" type="button" class="entities-button">🔄 Обновить</button>
-                        <button id="suggestions-train-button" type="button" class="primary-button">🚀 Анализировать историю</button>
-                        <button id="suggestions-train-advanced-button" type="button" class="primary-button">🤖 Расширенный анализ</button>
-                        <button id="suggestions-patterns-button" type="button" class="entities-button">📊 Показать паттерны</button>
-                    </div>
+            <div style="display:flex; gap:0.5rem; margin-bottom:1rem; flex-wrap:wrap;">
+                <button id="suggestions-load-button" type="button" class="entities-button">🔄 Обновить</button>
+                <button id="suggestions-train-button" type="button" class="primary-button">🚀 Анализировать историю</button>
+                <button id="suggestions-train-advanced-button" type="button" class="primary-button">🤖 Расширенный анализ</button>
+                <button id="suggestions-patterns-button" type="button" class="entities-button">📊 Показать паттерны</button>
+            </div>
+
+            <!-- Training Status Indicator -->
+            <div id="training-status" class="training-status" style="display:none;">
+                <div class="training-progress-bar-container">
+                    <div class="training-progress-bar" id="training-progress-bar"></div>
+                </div>
+                <div class="training-progress-text" id="training-progress">Обучение...</div>
+            </div>
                     
                     <div class="predictions-header" style="margin-bottom:1rem; padding:0.75rem; background:rgba(15,23,42,0.5); border-radius:0.5rem; border:1px solid rgba(55,65,81,0.5);">
                         <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:0.75rem; font-size:0.75rem;">
@@ -745,6 +792,133 @@ app.MapGet("/", async context =>
                 }
             }
 
+            // Function to poll training status
+            async function pollTrainingStatus() {
+                try {
+                    const resp = await fetch(BASE_PATH + "api/config");
+                    if (!resp.ok) {
+                        return;
+                    }
+
+                    const config = await resp.json();
+                    const trainingStatus = document.getElementById("training-status");
+                    const progressBar = document.getElementById("training-progress-bar");
+                    const progressText = document.getElementById("training-progress");
+
+                    if (!trainingStatus || !progressBar || !progressText) return;
+
+                    if (config.training_in_progress) {
+                        // Show training indicator
+                        trainingStatus.style.display = "block";
+                        progressBar.style.width = `${config.training_progress}%`;
+                        progressText.textContent = `${config.training_status} (${config.training_progress}%)`;
+
+                        // Update step if available
+                        if (config.training_step) {
+                            progressText.textContent = `${config.training_step}: ${config.training_status} (${config.training_progress}%)`;
+                        }
+                    } else {
+                        // Hide training indicator if training is not in progress
+                        trainingStatus.style.display = "none";
+                    }
+                } catch (err) {
+                    console.error("Error polling training status:", err);
+                }
+            }
+
+            // Function to update training functions to show initial status
+            async function trainAndAnalyze() {
+                const trainButton = document.getElementById("suggestions-train-button");
+                const errorBox = document.getElementById("suggestions-error");
+                if (!trainButton || !errorBox) return;
+
+                try {
+                    trainButton.disabled = true;
+                    trainButton.textContent = "🔄 Анализирование...";
+                    errorBox.style.display = "none";
+
+                    // Show training indicator immediately
+                    const trainingStatus = document.getElementById("training-status");
+                    if (trainingStatus) {
+                        trainingStatus.style.display = "block";
+                        document.getElementById("training-progress").textContent = "Запуск обучения...";
+                        document.getElementById("training-progress-bar").style.width = "0%";
+                    }
+
+                    const resp = await fetch(BASE_PATH + "api/train", { method: "POST" });
+                    if (!resp.ok) {
+                        const text = await resp.text();
+                        errorBox.style.display = "block";
+                        errorBox.textContent = "Failed: " + resp.status + " " + text;
+                        trainButton.textContent = "🚀 Анализировать историю";
+                        trainButton.disabled = false;
+                        return;
+                    }
+
+                    const data = await resp.json();
+                    if (data.status === "ok") {
+                        // Загружаем рекомендации и паттерны
+                        await loadSuggestions();
+                        await loadPatterns();
+                    } else {
+                        errorBox.style.display = "block";
+                        errorBox.textContent = "Analysis failed: " + JSON.stringify(data);
+                    }
+                } catch (err) {
+                    errorBox.style.display = "block";
+                    errorBox.textContent = "Error: " + err;
+                } finally {
+                    trainButton.textContent = "🚀 Анализировать историю";
+                    trainButton.disabled = false;
+                }
+            }
+
+            async function trainAdvanced() {
+                const trainButton = document.getElementById("suggestions-train-advanced-button");
+                const errorBox = document.getElementById("suggestions-error");
+                if (!trainButton || !errorBox) return;
+
+                try {
+                    trainButton.disabled = true;
+                    trainButton.textContent = "🔄 Анализирование...";
+                    errorBox.style.display = "none";
+
+                    // Show training indicator immediately
+                    const trainingStatus = document.getElementById("training-status");
+                    if (trainingStatus) {
+                        trainingStatus.style.display = "block";
+                        document.getElementById("training-progress").textContent = "Запуск расширенного обучения...";
+                        document.getElementById("training-progress-bar").style.width = "0%";
+                    }
+
+                    const resp = await fetch(BASE_PATH + "api/train-advanced", { method: "POST" });
+                    if (!resp.ok) {
+                        const text = await resp.text();
+                        errorBox.style.display = "block";
+                        errorBox.textContent = "Failed: " + resp.status + " " + text;
+                        trainButton.textContent = "🤖 Расширенный анализ";
+                        trainButton.disabled = false;
+                        return;
+                    }
+
+                    const data = await resp.json();
+                    if (data.status === "ok") {
+                        // Загружаем рекомендации и паттерны
+                        await loadSuggestions();
+                        await loadPatterns();
+                    } else {
+                        errorBox.style.display = "block";
+                        errorBox.textContent = "Advanced analysis failed: " + JSON.stringify(data);
+                    }
+                } catch (err) {
+                    errorBox.style.display = "block";
+                    errorBox.textContent = "Error: " + err;
+                } finally {
+                    trainButton.textContent = "🤖 Расширенный анализ";
+                    trainButton.disabled = false;
+                }
+            }
+
             document.addEventListener("DOMContentLoaded", () => {
                 const suggestionsLoadBtn = document.getElementById("suggestions-load-button");
                 const suggestionsTrainBtn = document.getElementById("suggestions-train-button");
@@ -779,6 +953,9 @@ app.MapGet("/", async context =>
 
                 // Автозагрузка рекомендаций при загрузке страницы
                 loadSuggestions();
+
+                // Start polling training status every 2 seconds
+                setInterval(pollTrainingStatus, 2000);
             });
     </body>
     </html>
