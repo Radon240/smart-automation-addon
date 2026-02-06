@@ -42,6 +42,16 @@ builder.Services.AddHttpClient("python", client =>
 
 var app = builder.Build();
 
+app.Use(async (context, next) =>
+{
+    if (context.Request.Headers.TryGetValue("X-Ingress-Path", out var ingressPath))
+    {
+        context.Request.PathBase = ingressPath.ToString();
+    }
+
+    await next();
+});
+
 // Простая HTML-страница для ingress Home Assistant
 app.MapGet("/", async context =>
 {
