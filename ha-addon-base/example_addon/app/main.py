@@ -49,39 +49,141 @@ last_training_samples = 0
 
 @app.route("/")
 def index():
-    """Простая страница для ingress с последними событиями."""
+    """Main page showing system status, events, and time series analysis information."""
     html = """
     <!doctype html>
     <html>
     <head>
         <meta charset="utf-8">
-        <title>Diploma Addon</title>
+        <title>Adaptive Home Automations</title>
         <style>
             body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 1.5rem; background: #111827; color: #e5e7eb; }
             h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
-            .status { margin-bottom: 1rem; }
+            h2 { font-size: 1.3rem; margin-bottom: 1rem; color: #f3f4f6; }
+            h3 { font-size: 1.1rem; margin-bottom: 0.75rem; color: #d1d5db; }
+            .status { margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
             .status span { padding: 0.2rem 0.5rem; border-radius: 999px; font-size: 0.8rem; }
             .status-ok { background: #065f46; }
             .status-bad { background: #7f1d1d; }
+            .status-warn { background: #92400e; }
+            .status-info { background: #1e40af; }
             .card { background: #1f2937; border-radius: 0.75rem; padding: 1rem 1.25rem; margin-top: 1rem; }
+            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; }
+            .grid-item { background: #111827; border-radius: 0.5rem; padding: 0.75rem; }
             pre { white-space: pre-wrap; word-break: break-word; font-size: 0.8rem; background: #111827; padding: 0.75rem; border-radius: 0.5rem; }
             .event { margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid #374151; }
             .event:last-child { border-bottom: none; }
             .event-header { font-size: 0.9rem; color: #9ca3af; margin-bottom: 0.25rem; }
             .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 999px; font-size: 0.7rem; background: #111827; color: #e5e7eb; margin-left: 0.25rem; }
+            .api-info { font-family: monospace; font-size: 0.8rem; background: #111827; padding: 0.5rem; border-radius: 0.25rem; overflow-x: auto; }
+            .model-info { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.5rem; }
+            .model-card { background: #111827; padding: 0.75rem; border-radius: 0.5rem; flex: 1; min-width: 200px; }
+            .model-card h4 { margin: 0 0 0.5rem 0; color: #9ca3af; font-size: 0.9rem; }
+            .model-card p { margin: 0.25rem 0; font-size: 0.85rem; }
+            .visualization { margin-top: 1rem; text-align: center; }
+            .visualization img { max-width: 100%; height: auto; border-radius: 0.5rem; }
+            .api-endpoints { margin-top: 1rem; }
+            .api-endpoint { background: #111827; padding: 0.5rem; margin-bottom: 0.5rem; border-radius: 0.25rem; }
+            .api-endpoint-code { font-family: monospace; color: #3b82f6; }
         </style>
     </head>
     <body>
-        <h1>Diploma Example Addon</h1>
+        <h1>Adaptive Home Automations</h1>
         <div class="status">
             <span class="{{ 'status-ok' if supervisor_token_present else 'status-bad' }}">
                 SUPERVISOR_TOKEN: {{ 'OK' if supervisor_token_present else 'NOT FOUND' }}
             </span>
             <span class="badge">events: {{ events_count }}</span>
+            <span class="{{ 'status-ok' if last_trained else 'status-warn' }}">
+                {{ 'TRAINED' if last_trained else 'NOT TRAINED' }}
+            </span>
         </div>
 
         <div class="card">
-            <h2>Последние события Home Assistant</h2>
+            <h2>📊 System Overview</h2>
+            <div class="grid">
+                <div class="grid-item">
+                    <h3>🤖 ML Models Status</h3>
+                    <div class="model-info">
+                        <div class="model-card">
+                            <h4>Correlation Analyzer</h4>
+                            <p>✅ Available</p>
+                            <p>📊 Patterns: {{ statistics.temporal_patterns_found if statistics else 'N/A' }}</p>
+                            <p>💡 Suggestions: {{ statistics.automation_suggestions if statistics else 'N/A' }}</p>
+                        </div>
+                        <div class="model-card">
+                            <h4>Time Series (ARIMA)</h4>
+                            <p>{{ '✅ Available' if model_info.arima_available else '❌ Not available' }}</p>
+                            <p>📈 Models trained: {{ model_info.trained_models|length if model_info else '0' }}</p>
+                            <p>🔄 Forecast horizon: 6 hours</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="grid-item">
+                    <h3>🔧 Configuration</h3>
+                    <p><strong>Min Support:</strong> {{ min_support }}</p>
+                    <p><strong>Min Confidence:</strong> {{ min_confidence }}</p>
+                    <p><strong>History Days:</strong> {{ history_days }}</p>
+                    <p><strong>Training Hour:</strong> {{ train_hour }}:00</p>
+                    <p><strong>Last Training:</strong> {{ last_trained.isoformat() if last_trained else 'Never' }}</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📈 Time Series Analysis</h2>
+            {% if time_series_results %}
+                <div class="grid">
+                    {% for entity_id, result in time_series_results.items() %}
+                        <div class="grid-item">
+                            <h3>{{ entity_id }}</h3>
+                            <p><strong>Model:</strong> {{ result.model_type }}</p>
+                            <p><strong>Status:</strong> {{ result.status }}</p>
+                            <p><strong>MSE:</strong> {{ "%.4f"|format(result.metrics.mse) if result.metrics else 'N/A' }}</p>
+                            <p><strong>RMSE:</strong> {{ "%.4f"|format(result.metrics.rmse) if result.metrics else 'N/A' }}</p>
+                            <p><strong>R² Score:</strong> {{ "%.4f"|format(result.metrics.r2_score) if result.metrics else 'N/A' }}</p>
+                            {% if result.visualization %}
+                                <div class="visualization">
+                                    <img src="{{ result.visualization }}" alt="Predictions for {{ entity_id }}">
+                                </div>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p>No time series analysis results yet. Train models to see predictions.</p>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <h2>🔄 API Endpoints</h2>
+            <div class="api-endpoints">
+                <div class="api-endpoint">
+                    <span class="api-endpoint-code">POST /api/train</span> - Train correlation analyzer
+                </div>
+                <div class="api-endpoint">
+                    <span class="api-endpoint-code">POST /api/train-advanced</span> - Train both correlation and time series models
+                </div>
+                <div class="api-endpoint">
+                    <span class="api-endpoint-code">GET /api/automation-suggestions</span> - Get automation suggestions
+                </div>
+                <div class="api-endpoint">
+                    <span class="api-endpoint-code">GET /api/patterns</span> - Get discovered temporal patterns
+                </div>
+                <div class="api-endpoint">
+                    <span class="api-endpoint-code">POST /api/time-series/analyze</span> - Analyze specific entity time series
+                </div>
+                <div class="api-endpoint">
+                    <span class="api-endpoint-code">POST /api/time-series/suggestions</span> - Get time series based suggestions
+                </div>
+                <div class="api-endpoint">
+                    <span class="api-endpoint-code">GET /api/time-series/models</span> - Get models information
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📜 Latest Home Assistant Events</h2>
             {% if events %}
                 {% for ev in events %}
                     <div class="event">
@@ -95,7 +197,7 @@ def index():
                     </div>
                 {% endfor %}
             {% else %}
-                <p>Событий пока нет или ещё идёт подключение к WebSocket API.</p>
+                <p>No events yet or still connecting to WebSocket API.</p>
             {% endif %}
         </div>
     </body>

@@ -431,6 +431,7 @@ app.MapGet("/", async context =>
                     <div style="display:flex; gap:0.5rem; margin-bottom:1rem; flex-wrap:wrap;">
                         <button id="suggestions-load-button" type="button" class="entities-button">🔄 Обновить</button>
                         <button id="suggestions-train-button" type="button" class="primary-button">🚀 Анализировать историю</button>
+                        <button id="suggestions-train-advanced-button" type="button" class="primary-button">🤖 Расширенный анализ</button>
                         <button id="suggestions-patterns-button" type="button" class="entities-button">📊 Показать паттерны</button>
                     </div>
                     
@@ -692,9 +693,48 @@ app.MapGet("/", async context =>
                 }
             }
 
+            async function trainAdvanced() {
+                const trainButton = document.getElementById("suggestions-train-advanced-button");
+                const errorBox = document.getElementById("suggestions-error");
+                if (!trainButton || !errorBox) return;
+
+                try {
+                    trainButton.disabled = true;
+                    trainButton.textContent = "🔄 Анализирование...";
+                    errorBox.style.display = "none";
+
+                    const resp = await fetch("./api/train-advanced", { method: "POST" });
+                    if (!resp.ok) {
+                        const text = await resp.text();
+                        errorBox.style.display = "block";
+                        errorBox.textContent = "Failed: " + resp.status + " " + text;
+                        trainButton.textContent = "🤖 Расширенный анализ";
+                        trainButton.disabled = false;
+                        return;
+                    }
+
+                    const data = await resp.json();
+                    if (data.status === "ok") {
+                        // Загружаем рекомендации и паттерны
+                        await loadSuggestions();
+                        await loadPatterns();
+                    } else {
+                        errorBox.style.display = "block";
+                        errorBox.textContent = "Advanced analysis failed: " + JSON.stringify(data);
+                    }
+                } catch (err) {
+                    errorBox.style.display = "block";
+                    errorBox.textContent = "Error: " + err;
+                } finally {
+                    trainButton.textContent = "🤖 Расширенный анализ";
+                    trainButton.disabled = false;
+                }
+            }
+
             document.addEventListener("DOMContentLoaded", () => {
                 const suggestionsLoadBtn = document.getElementById("suggestions-load-button");
                 const suggestionsTrainBtn = document.getElementById("suggestions-train-button");
+                const suggestionsTrainAdvancedBtn = document.getElementById("suggestions-train-advanced-button");
                 const suggestionsPatternsBtn = document.getElementById("suggestions-patterns-button");
 
                 if (suggestionsLoadBtn) {
@@ -703,6 +743,10 @@ app.MapGet("/", async context =>
 
                 if (suggestionsTrainBtn) {
                     suggestionsTrainBtn.addEventListener("click", trainAndAnalyze);
+                }
+
+                if (suggestionsTrainAdvancedBtn) {
+                    suggestionsTrainAdvancedBtn.addEventListener("click", trainAdvanced);
                 }
 
                 if (suggestionsPatternsBtn) {
@@ -978,6 +1022,178 @@ app.MapGet("/api/patterns", async (IHttpClientFactory httpClientFactory) =>
                 message = ex.Message
             },
             statusCode: StatusCodes.Status503ServiceUnavailable
+        );
+    }
+});
+
+// Proxy endpoint для анализа временных рядов
+app.MapPost("/api/time-series/analyze", async (IHttpClientFactory httpClientFactory, HttpRequest request) =>
+{
+    try
+    {
+        var pythonClient = httpClientFactory.CreateClient("python");
+        var content = await new StreamReader(request.Body).ReadToEndAsync();
+
+        using var response = await pythonClient.PostAsync("api/time-series/analyze",
+            new StringContent(content, System.Text.Encoding.UTF8, "application/json"));
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync();
+            return Results.Json(
+                new
+                {
+                    error = "Failed to analyze time series",
+                    status = (int)response.StatusCode,
+                    details = errorBody
+                },
+                statusCode: StatusCodes.Status502BadGateway
+            );
+        }
+
+        var responseContent = await response.Content.ReadAsStringAsync();
+        return Results.Content(responseContent, "application/json");
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(
+            new
+            {
+                error = "Exception while calling Python time series analysis service",
+                message = ex.Message
+            },
+            statusCode: StatusCodes.Status503ServiceUnavailable
+        );
+    }
+});
+
+// Proxy endpoint для получения предложений на основе временных рядов
+app.MapPost("/api/time-series/suggestions", async (IHttpClientFactory httpClientFactory, HttpRequest request) =>
+{
+    try
+    {
+        var pythonClient = httpClientFactory.CreateClient("python");
+        var content = await new StreamReader(request.Body).ReadToEndAsync();
+
+        using var response = await pythonClient.PostAsync("api/time-series/suggestions",
+            new StringContent(content, System.Text.Encoding.UTF8, "application/json"));
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync();
+            return Results.Json(
+                new
+                {
+                    error = "Failed to get time series suggestions",
+                    status = (int)response.StatusCode,
+                    details = errorBody
+                },
+                statusCode: StatusCodes.Status502BadGateway
+            );
+        }
+
+        var responseContent = await response.Content.ReadAsStringAsync();
+        return Results.Content(responseContent, "application/json");
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(
+            new
+            {
+                error = "Exception while calling Python time series suggestions service",
+                message = ex.Message
+            },
+            statusCode: StatusCodes.Status503ServiceUnavailable
+        );
+    }
+});
+
+// Proxy endpoint для получения информации о моделях временных рядов
+app.MapGet("/api/time-series/models", async (IHttpClientFactory httpClientFactory) =>
+{
+    try
+    {
+        var pythonClient = httpClientFactory.CreateClient("python");
+        using var response = await pythonClient.GetAsync("api/time-series/models");
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync();
+            return Results.Json(
+                new
+                {
+                    error = "Failed to get time series models info",
+                    status = (int)response.StatusCode
+                },
+                statusCode: StatusCodes.Status502BadGateway
+            );
+        }
+
+        var content = await response.Content.ReadAsStringAsync();
+        return Results.Content(content, "application/json");
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(
+            new
+            {
+                error = "Exception while calling Python time series models service",
+                message = ex.Message
+            },
+            statusCode: StatusCodes.Status503ServiceUnavailable
+        );
+    }
+});
+
+// Proxy endpoint для запуска расширенного обучения (корреляции + временные ряды)
+app.MapPost("/api/train-advanced", async (IHttpClientFactory httpClientFactory) =>
+{
+    try
+    {
+        var pythonClient = httpClientFactory.CreateClient("python");
+
+        using var response = await pythonClient.PostAsync("api/train-advanced",
+            new StringContent("{}", System.Text.Encoding.UTF8, "application/json"));
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync();
+            return Results.Json(
+                new
+                {
+                    error = "Failed to trigger advanced training on Python service",
+                    status = (int)response.StatusCode,
+                    details = errorBody
+                },
+                statusCode: StatusCodes.Status502BadGateway
+            );
+        }
+
+        var content = await response.Content.ReadAsStringAsync();
+        var doc = JsonDocument.Parse(content);
+        return Results.Json(doc.RootElement);
+    }
+    catch (HttpRequestException ex)
+    {
+        return Results.Json(
+            new
+            {
+                error = "Failed to connect to Python service",
+                message = ex.Message,
+                hint = "Ensure Python Flask service is running and PYTHON_API_URL is configured"
+            },
+            statusCode: StatusCodes.Status503ServiceUnavailable
+        );
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(
+            new
+            {
+                error = "Exception while calling Python advanced training service",
+                message = ex.Message
+            },
+            statusCode: StatusCodes.Status500InternalServerError
         );
     }
 });
