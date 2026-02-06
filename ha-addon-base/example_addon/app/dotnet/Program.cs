@@ -490,9 +490,13 @@ app.MapGet("/", async context =>
             </section>
         </main>
         <script>
+            // Base path for ingress support
+            const BASE_PATH = window.location.pathname.endsWith("/")
+                ? window.location.pathname
+                : window.location.pathname + "/";
             async function loadAddonHealth() {
                 try {
-                    const resp = await fetch("./health", { method: "GET" });
+                    const resp = await fetch(BASE_PATH + "health", { method: "GET" });
                     if (!resp.ok) {
                         document.getElementById("addon-status-text").textContent = "error";
                         document.getElementById("addon-status-dot").style.background = "#ef4444";
@@ -525,7 +529,7 @@ app.MapGet("/", async context =>
                 document.getElementById("suggestions-count").textContent = suggestions.length + " шт.";
                 document.getElementById("suggestions-samples").textContent = (stats.total_events_analyzed ?? 0) + " событий";
                 document.getElementById("suggestions-entities").textContent = (stats.unique_entities ?? 0) + " сущностей";
-                
+
                 if (suggestionsSnapshot.timestamp) {
                     const ts = new Date(suggestionsSnapshot.timestamp);
                     const timeStr = ts.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
@@ -543,28 +547,28 @@ app.MapGet("/", async context =>
                 for (const sugg of suggestions) {
                     const confidence = (sugg.confidence * 100).toFixed(0) + "%";
                     const typeEmoji = sugg.trigger_type === "time" ? "⏰" : "📊";
-                    
+
                     const row = document.createElement("div");
                     row.style.cssText = "padding:0.6rem 0.5rem; border-bottom:1px solid rgba(31,41,55,0.9); cursor:pointer; transition:background 0.2s;";
                     row.onmouseover = () => row.style.background = "rgba(55,65,81,0.3)";
                     row.onmouseout = () => row.style.background = "transparent";
-                    
-                    row.innerHTML = 
+
+                    row.innerHTML =
                         '<div style="display:grid; grid-template-columns:minmax(0,3fr) minmax(0,1fr) minmax(0,1.2fr); gap:0.5rem; font-size:0.8rem;">' +
                         '<div style="color:#e5e7eb;"><strong>' + sugg.title + '</strong><br><span style="color:#9ca3af; font-size:0.75rem;">' + sugg.description + '</span></div>' +
                         '<div style="color:#a5b4fc;">' + typeEmoji + ' ' + sugg.trigger_type + '</div>' +
                         '<div style="color:#fbbf24; text-align:right; font-weight:600;">' + confidence + '</div>' +
                         '</div>' +
                         '<div style="margin-top:0.4rem; padding:0.4rem; background:rgba(15,23,42,0.9); border-radius:0.3rem; border:1px solid rgba(55,65,81,0.9); font-family:monospace; font-size:0.7rem; color:#38bdf8; max-height:0; overflow:hidden; transition:max-height 0.2s;" class="yaml-code">' +
-                        sugg.automation_yaml.replace(/</g, "&lt;").replace(/>/g, "&gt;") +
+                        sugg.automation_yaml.replace(/</g, "<").replace(/>/g, ">") +
                         '</div>';
-                    
+
                     row.addEventListener("click", () => {
                         const yaml = row.querySelector(".yaml-code");
                         const currentHeight = yaml.style.maxHeight;
                         yaml.style.maxHeight = currentHeight === "0px" || !currentHeight ? "400px" : "0px";
                     });
-                    
+
                     list.appendChild(row);
                 }
             }
@@ -588,7 +592,7 @@ app.MapGet("/", async context =>
                     const time = pattern.hour.toString().padStart(2, "0") + ":" + pattern.minute.toString().padStart(2, "0");
                     const days = (pattern.weekdays || []).map(d => ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"][d]).join(", ");
                     const consistency = (pattern.consistency * 100).toFixed(0) + "%";
-                    
+
                     const row = document.createElement("div");
                     row.className = "prediction-row";
                     row.style.gridTemplateColumns = "minmax(0,2fr) minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr)";
@@ -610,7 +614,7 @@ app.MapGet("/", async context =>
                     document.getElementById("suggestions-count").textContent = "загрузка...";
                     errorBox.style.display = "none";
 
-                    const resp = await fetch("./api/automation-suggestions", { method: "GET" });
+                    const resp = await fetch(BASE_PATH + "api/automation-suggestions", { method: "GET" });
                     if (!resp.ok) {
                         const text = await resp.text();
                         errorBox.style.display = "block";
@@ -637,7 +641,7 @@ app.MapGet("/", async context =>
                     list.innerHTML = '<div class="predictions-loading">Загрузка паттернов...</div>';
                     errorBox.style.display = "none";
 
-                    const resp = await fetch("./api/patterns", { method: "GET" });
+                    const resp = await fetch(BASE_PATH + "api/patterns", { method: "GET" });
                     if (!resp.ok) {
                         const text = await resp.text();
                         errorBox.style.display = "block";
@@ -665,7 +669,7 @@ app.MapGet("/", async context =>
                     trainButton.textContent = "🔄 Анализирование...";
                     errorBox.style.display = "none";
 
-                    const resp = await fetch("./api/train", { method: "POST" });
+                    const resp = await fetch(BASE_PATH + "api/train", { method: "POST" });
                     if (!resp.ok) {
                         const text = await resp.text();
                         errorBox.style.display = "block";
@@ -703,7 +707,7 @@ app.MapGet("/", async context =>
                     trainButton.textContent = "🔄 Анализирование...";
                     errorBox.style.display = "none";
 
-                    const resp = await fetch("./api/train-advanced", { method: "POST" });
+                    const resp = await fetch(BASE_PATH + "api/train-advanced", { method: "POST" });
                     if (!resp.ok) {
                         const text = await resp.text();
                         errorBox.style.display = "block";
