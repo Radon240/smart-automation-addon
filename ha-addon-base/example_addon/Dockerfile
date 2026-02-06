@@ -18,7 +18,7 @@ RUN dotnet publish ./dotnet/DiplomaAddon.csproj -c Release -o /app/dotnet_out
 # Python-зависимости (пока не используются, но оставляем как основу под модели)
 WORKDIR /app
 COPY app/requirements.txt .
-RUN pip3 install --break-system-packages -r requirements.txt
+RUN pip3 install  -r requirements.txt
 
 # Остальной код и скрипт запуска
 COPY app/ /app/
