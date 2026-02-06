@@ -1,3 +1,9 @@
 flask
 requests
 aiohttp
+numpy
+pandas
+scikit-learn
+tensorflow
+statsmodels
+matplotlib

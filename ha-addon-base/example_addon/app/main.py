@@ -7,9 +7,13 @@ from datetime import datetime
 
 import requests
 import aiohttp
-
+    
 from ml_correlation import CorrelationAnalyzer, events_from_ha_history
 from config import get_config
+from time_series_analysis import TimeSeriesAnalyzer, TimeSeriesAnalysisResult
+import base64
+import io
+import matplotlib.pyplot as plt
 
 
 SUPERVISOR_TOKEN = os.getenv("SUPERVISOR_TOKEN")
@@ -32,7 +36,11 @@ MAX_EVENTS = 20
 # ML модель для анализа корреляций и предсказания автоматизаций
 analyzer = CorrelationAnalyzer(min_confidence=MODEL_MIN_CONFIDENCE, min_support=MODEL_MIN_SUPPORT)
 
+# Time Series Analyzer for advanced models
+time_series_analyzer = TimeSeriesAnalyzer(look_back=24, forecast_horizon=6)
+
 print(f"[diploma_addon] Configuration: min_support={MODEL_MIN_SUPPORT}, min_confidence={MODEL_MIN_CONFIDENCE}, history_days={HISTORY_DAYS}, train_hour={TRAIN_HOUR}")
+print(f"[diploma_addon] Time Series Analyzer initialized. LSTM available: {time_series_analyzer.get_available_models_info()['lstm_available']}, ARIMA available: {time_series_analyzer.get_available_models_info()['arima_available']}")
 
 # Статус обучения
 last_trained = None
@@ -272,6 +280,215 @@ def get_predictions():
         traceback.print_exc()
         return jsonify({"error": str(e), "status": "error"}), 500
 
+@app.route("/api/time-series/analyze", methods=["POST"])
+def analyze_time_series():
+    """
+    Analyze time series data for a specific entity using advanced models (LSTM, ARIMA).
+    """
+    try:
+        data = request.get_json()
+        if not data or 'entity_id' not in data:
+            return jsonify({"error": "entity_id is required", "status": "error"}), 400
+
+        entity_id = data['entity_id']
+        model_type = data.get('model_type', 'lstm')  # 'lstm', 'arima', or 'both'
+        frequency = data.get('frequency', '1H')  # Resampling frequency
+
+        # Get historical data
+        ha_history = _fetch_history_from_ha()
+        if not ha_history:
+            return jsonify({"error": "No historical data available", "status": "error"}), 404
+
+        # Analyze time series
+        result = time_series_analyzer.analyze_entity_timeseries(
+            ha_history, entity_id, model_type, frequency
+        )
+
+        if result is None:
+            return jsonify({
+                "error": f"Failed to analyze time series for {entity_id}",
+                "status": "error",
+                "hint": "Check if entity has enough numeric data"
+            }), 400
+
+        return jsonify({
+            "status": "ok",
+            "timestamp": datetime.now().isoformat(),
+            "result": result.to_dict()
+        }), 200
+
+    except Exception as e:
+        print(f"[diploma_addon] Error in time series analysis: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e), "status": "error"}), 500
+
+@app.route("/api/time-series/suggestions", methods=["POST"])
+def get_time_series_suggestions():
+    """
+    Get automation suggestions based on time series predictions.
+    """
+    try:
+        data = request.get_json()
+        if not data or 'entity_id' not in data:
+            return jsonify({"error": "entity_id is required", "status": "error"}), 400
+
+        entity_id = data['entity_id']
+        confidence_threshold = data.get('confidence_threshold', 0.7)
+
+        # Get historical data
+        ha_history = _fetch_history_from_ha()
+        if not ha_history:
+            return jsonify({"error": "No historical data available", "status": "error"}), 404
+
+        # Analyze time series
+        result = time_series_analyzer.analyze_entity_timeseries(
+            ha_history, entity_id, model_type='lstm'
+        )
+
+        if result is None:
+            return jsonify({
+                "error": f"Failed to analyze time series for {entity_id}",
+                "status": "error"
+            }), 400
+
+        # Generate suggestions from predictions
+        suggestions = time_series_analyzer.get_automation_suggestions_from_predictions(
+            result.predictions, confidence_threshold
+        )
+
+        return jsonify({
+            "status": "ok",
+            "timestamp": datetime.now().isoformat(),
+            "entity_id": entity_id,
+            "suggestions": suggestions,
+            "model_info": time_series_analyzer.get_available_models_info()
+        }), 200
+
+    except Exception as e:
+        print(f"[diploma_addon] Error in time series suggestions: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e), "status": "error"}), 500
+
+@app.route("/api/time-series/models", methods=["GET"])
+def get_time_series_models_info():
+    """
+    Get information about available time series models and their status.
+    """
+    try:
+        model_info = time_series_analyzer.get_available_models_info()
+        return jsonify({
+            "status": "ok",
+            "timestamp": datetime.now().isoformat(),
+            "models": model_info
+        }), 200
+    except Exception as e:
+        print(f"[diploma_addon] Error getting model info: {e}")
+        return jsonify({"error": str(e), "status": "error"}), 500
+
+@app.route("/api/train-advanced", methods=["POST"])
+def train_advanced_models():
+    """
+    Train both correlation analyzer and time series models.
+    """
+    global training_in_progress, last_trained, last_training_samples, analyzer
+
+    if training_in_progress:
+        return jsonify({"status": "busy", "message": "Training already in progress"}), 409
+
+    training_in_progress = True
+    start = datetime.now()
+
+    try:
+        # Train correlation analyzer (existing functionality)
+        ha_history = _fetch_history_from_ha()
+
+        if last_events:
+            for event_data in last_events:
+                ev = event_data.get("event", {})
+                data = ev.get("data", {}) or {}
+                new_state = data.get("new_state")
+                if new_state:
+                    ha_history.append(new_state)
+
+        events = events_from_ha_history(ha_history)
+
+        analyzer = CorrelationAnalyzer(
+            min_confidence=MODEL_MIN_CONFIDENCE,
+            min_support=MODEL_MIN_SUPPORT
+        )
+
+        if events:
+            analyzer.fit(events)
+            last_training_samples = len(events)
+        else:
+            last_training_samples = 0
+
+        # Train time series models for all numeric entities
+        time_series_results = []
+        unique_entities = set(e.get('entity_id') for e in ha_history if 'entity_id' in e)
+
+        for entity_id in unique_entities:
+            try:
+                # Try LSTM first
+                lstm_result = time_series_analyzer.analyze_entity_timeseries(
+                    ha_history, entity_id, model_type='lstm', frequency='1H'
+                )
+
+                if lstm_result:
+                    time_series_results.append({
+                        'entity_id': entity_id,
+                        'model_type': 'lstm',
+                        'status': 'success',
+                        'metrics': lstm_result.training_metrics
+                    })
+                else:
+                    time_series_results.append({
+                        'entity_id': entity_id,
+                        'model_type': 'lstm',
+                        'status': 'failed',
+                        'reason': 'insufficient_data'
+                    })
+
+            except Exception as e:
+                time_series_results.append({
+                    'entity_id': entity_id,
+                    'model_type': 'lstm',
+                    'status': 'error',
+                    'error': str(e)
+                })
+
+        # Update training status
+        last_trained = datetime.now()
+        duration = (last_trained - start).total_seconds()
+        training_in_progress = False
+
+        # Get statistics from both analyzers
+        correlation_stats = analyzer.get_statistics()
+        model_info = time_series_analyzer.get_available_models_info()
+
+        return jsonify({
+            "status": "ok",
+            "trained_at": last_trained.isoformat(),
+            "training_samples": last_training_samples,
+            "duration_seconds": duration,
+            "correlation_analysis": correlation_stats,
+            "time_series_analysis": {
+                "entities_processed": len(unique_entities),
+                "successful_models": len([r for r in time_series_results if r['status'] == 'success']),
+                "results": time_series_results
+            },
+            "model_info": model_info
+        }), 200
+
+    except Exception as e:
+        training_in_progress = False
+        print(f"[diploma_addon] Advanced training error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "error": str(e)}), 500
+
 
 def _fetch_history_from_ha():
     """
@@ -395,8 +612,8 @@ def _nightly_trainer_thread():
         time.sleep(wait_seconds)
         try:
             print("[diploma_addon] Running scheduled training...")
-            # perform training synchronously
-            train_now()
+            # perform advanced training with both correlation and time series models
+            train_advanced_models()
         except Exception as e:
             print(f"[diploma_addon] Nightly training failed: {e}")
 
