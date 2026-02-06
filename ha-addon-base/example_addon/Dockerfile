@@ -1,7 +1,7 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
-# Базовые зависимости: Python + .NET SDK
+# Базовые зависимости
 RUN apk add --no-cache \
     python3 \
     py3-pip \
@@ -12,17 +12,22 @@ RUN apk add --no-cache \
     libstdc++ \
     dotnet8-sdk
 
-# Сборка .NET-приложения
-WORKDIR /src
-COPY app/dotnet/ ./dotnet/
-RUN dotnet publish ./dotnet/DiplomaAddon.csproj -c Release -o /app/dotnet_out
+# ---------- Python venv ----------
+RUN python3 -m venv /venv
+ENV PATH="/venv/bin:$PATH"
 
 # Python-зависимости
 WORKDIR /app
 COPY app/requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip \
+ && pip install --no-cache-dir -r requirements.txt
 
-# Остальной код и скрипт запуска
+# ---------- .NET build ----------
+WORKDIR /src
+COPY app/dotnet/ ./dotnet/
+RUN dotnet publish ./dotnet/DiplomaAddon.csproj -c Release -o /app/dotnet_out
+
+# ---------- App files ----------
 COPY app/ /app/
 COPY run.sh /
 RUN chmod +x /run.sh
