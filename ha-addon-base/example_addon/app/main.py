@@ -37,10 +37,10 @@ MAX_EVENTS = 20
 analyzer = CorrelationAnalyzer(min_confidence=MODEL_MIN_CONFIDENCE, min_support=MODEL_MIN_SUPPORT)
 
 # Time Series Analyzer for advanced models
-time_series_analyzer = TimeSeriesAnalyzer(look_back=24, forecast_horizon=6)
+time_series_analyzer = TimeSeriesAnalyzer(forecast_horizon=6)
 
 print(f"[diploma_addon] Configuration: min_support={MODEL_MIN_SUPPORT}, min_confidence={MODEL_MIN_CONFIDENCE}, history_days={HISTORY_DAYS}, train_hour={TRAIN_HOUR}")
-print(f"[diploma_addon] Time Series Analyzer initialized. LSTM available: {time_series_analyzer.get_available_models_info()['lstm_available']}, ARIMA available: {time_series_analyzer.get_available_models_info()['arima_available']}")
+print(f"[diploma_addon] Time Series Analyzer initialized. ARIMA available: {time_series_analyzer.get_available_models_info()['arima_available']}")
 
 # Статус обучения
 last_trained = None
@@ -283,7 +283,7 @@ def get_predictions():
 @app.route("/api/time-series/analyze", methods=["POST"])
 def analyze_time_series():
     """
-    Analyze time series data for a specific entity using advanced models (LSTM, ARIMA).
+    Analyze time series data for a specific entity using ARIMA models.
     """
     try:
         data = request.get_json()
@@ -291,7 +291,6 @@ def analyze_time_series():
             return jsonify({"error": "entity_id is required", "status": "error"}), 400
 
         entity_id = data['entity_id']
-        model_type = data.get('model_type', 'lstm')  # 'lstm', 'arima', or 'both'
         frequency = data.get('frequency', '1H')  # Resampling frequency
 
         # Get historical data
@@ -299,9 +298,9 @@ def analyze_time_series():
         if not ha_history:
             return jsonify({"error": "No historical data available", "status": "error"}), 404
 
-        # Analyze time series
+        # Analyze time series using ARIMA
         result = time_series_analyzer.analyze_entity_timeseries(
-            ha_history, entity_id, model_type, frequency
+            ha_history, entity_id, frequency
         )
 
         if result is None:
@@ -341,9 +340,9 @@ def get_time_series_suggestions():
         if not ha_history:
             return jsonify({"error": "No historical data available", "status": "error"}), 404
 
-        # Analyze time series
+        # Analyze time series using ARIMA
         result = time_series_analyzer.analyze_entity_timeseries(
-            ha_history, entity_id, model_type='lstm'
+            ha_history, entity_id
         )
 
         if result is None:
@@ -425,28 +424,28 @@ def train_advanced_models():
         else:
             last_training_samples = 0
 
-        # Train time series models for all numeric entities
+        # Train time series models for all numeric entities using ARIMA
         time_series_results = []
         unique_entities = set(e.get('entity_id') for e in ha_history if 'entity_id' in e)
 
         for entity_id in unique_entities:
             try:
-                # Try LSTM first
-                lstm_result = time_series_analyzer.analyze_entity_timeseries(
-                    ha_history, entity_id, model_type='lstm', frequency='1H'
+                # Train ARIMA model
+                arima_result = time_series_analyzer.analyze_entity_timeseries(
+                    ha_history, entity_id, frequency='1H'
                 )
 
-                if lstm_result:
+                if arima_result:
                     time_series_results.append({
                         'entity_id': entity_id,
-                        'model_type': 'lstm',
+                        'model_type': 'arima',
                         'status': 'success',
-                        'metrics': lstm_result.training_metrics
+                        'metrics': arima_result.training_metrics
                     })
                 else:
                     time_series_results.append({
                         'entity_id': entity_id,
-                        'model_type': 'lstm',
+                        'model_type': 'arima',
                         'status': 'failed',
                         'reason': 'insufficient_data'
                     })
@@ -454,7 +453,7 @@ def train_advanced_models():
             except Exception as e:
                 time_series_results.append({
                     'entity_id': entity_id,
-                    'model_type': 'lstm',
+                    'model_type': 'arima',
                     'status': 'error',
                     'error': str(e)
                 })

@@ -1,18 +1,17 @@
 """
 Advanced time series analysis for Home Assistant automation suggestions.
 
-This module implements sophisticated time series models (LSTM, ARIMA) for analyzing
+This module implements time series models (ARIMA, SARIMA) for analyzing
 historical state change events and predicting future patterns. It extends the basic
-correlation analysis with more powerful machine learning techniques.
+correlation analysis with more powerful statistical techniques.
 
 Key features:
-- LSTM networks for sequence prediction
-- ARIMA models for time series forecasting
+- ARIMA/SARIMA models for time series forecasting
 - Seasonality and trend analysis
 - Integration with existing correlation analysis
+- Lightweight implementation compatible with Home Assistant Python 3.12
 """
 
-# Import core libraries first
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
@@ -29,19 +28,7 @@ import base64
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore')
 
-# Try to import TensorFlow for LSTM
-try:
-    import tensorflow as tf
-    from tensorflow.keras.models import Sequential
-    from tensorflow.keras.layers import LSTM, Dense, Dropout
-    from tensorflow.keras.optimizers import Adam
-    from tensorflow.keras.callbacks import EarlyStopping
-    TF_AVAILABLE = True
-except ImportError:
-    TF_AVAILABLE = False
-    Sequential = None  # Placeholder to avoid NameError
-
-# Try to import statsmodels for ARIMA
+# Import statsmodels for ARIMA
 try:
     from statsmodels.tsa.arima.model import ARIMA
     from statsmodels.tsa.statespace.sarimax import SARIMAX
@@ -58,7 +45,7 @@ class TimeSeriesPrediction:
     timestamp: datetime
     predicted_value: float
     confidence: float
-    model_type: str  # 'lstm', 'arima', 'sarima'
+    model_type: str  # 'arima', 'sarima'
     actual_value: Optional[float] = None
     error: Optional[float] = None
 
@@ -98,18 +85,17 @@ class TimeSeriesAnalysisResult:
 
 class TimeSeriesAnalyzer:
     """
-    Advanced time series analyzer using LSTM and ARIMA models.
+    Advanced time series analyzer using ARIMA models.
 
     This class provides methods for:
     - Preprocessing time series data from Home Assistant events
-    - Training LSTM and ARIMA models
+    - Training ARIMA/SARIMA models
     - Making predictions
     - Visualizing results
     - Generating automation suggestions based on predictions
     """
 
     def __init__(self,
-                 look_back: int = 24,
                  forecast_horizon: int = 6,
                  test_size: float = 0.2,
                  random_state: int = 42):
@@ -117,12 +103,10 @@ class TimeSeriesAnalyzer:
         Initialize the time series analyzer.
 
         Args:
-            look_back: Number of time steps to look back for LSTM
             forecast_horizon: How many steps ahead to predict
             test_size: Proportion of data to use for testing
             random_state: Random seed for reproducibility
         """
-        self.look_back = look_back
         self.forecast_horizon = forecast_horizon
         self.test_size = test_size
         self.random_state = random_state
@@ -131,8 +115,6 @@ class TimeSeriesAnalyzer:
 
         # Set random seeds for reproducibility
         np.random.seed(random_state)
-        if TF_AVAILABLE:
-            tf.random.set_seed(random_state)
 
     def preprocess_events_to_timeseries(self,
                                       events: List[Dict[str, Any]],
@@ -205,86 +187,6 @@ class TimeSeriesAnalyzer:
             print(f"Error preprocessing events for {target_entity}: {e}")
             return None
 
-    def create_lstm_dataset(self, dataset: np.array, look_back: int = 1) -> Tuple[np.array, np.array]:
-        """
-        Create LSTM dataset from time series data.
-
-        Args:
-            dataset: Numpy array of time series values
-            look_back: Number of previous time steps to use as input
-
-        Returns:
-            Tuple of (X, Y) where X is input data and Y is target values
-        """
-        X, Y = [], []
-        for i in range(len(dataset) - look_back - 1):
-            a = dataset[i:(i + look_back), 0]
-            X.append(a)
-            Y.append(dataset[i + look_back, 0])
-        return np.array(X), np.array(Y)
-
-    def train_lstm_model(self,
-                        X_train: np.array,
-                        y_train: np.array,
-                        entity_id: str,
-                        epochs: int = 50,
-                        batch_size: int = 32,
-                        lstm_units: int = 50) -> Any:
-        """
-        Train LSTM model for time series prediction.
-
-        Args:
-            X_train: Training input data
-            y_train: Training target data
-            entity_id: Entity ID for model identification
-            epochs: Number of training epochs
-            batch_size: Batch size for training
-            lstm_units: Number of LSTM units
-
-        Returns:
-            Trained LSTM model or None if training fails
-        """
-        if not TF_AVAILABLE:
-            print("TensorFlow not available. Cannot train LSTM model.")
-            return None
-
-        try:
-            # Reshape input to be [samples, time steps, features]
-            X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
-
-            # Build LSTM model
-            model = Sequential([
-                LSTM(lstm_units, return_sequences=True, input_shape=(X_train.shape[1], 1)),
-                Dropout(0.2),
-                LSTM(lstm_units, return_sequences=False),
-                Dropout(0.2),
-                Dense(25),
-                Dense(1)
-            ])
-
-            # Compile model
-            optimizer = Adam(learning_rate=0.001)
-            model.compile(optimizer=optimizer, loss='mean_squared_error')
-
-            # Train model
-            early_stopping = EarlyStopping(monitor='loss', patience=5, restore_best_weights=True)
-            history = model.fit(
-                X_train, y_train,
-                epochs=epochs,
-                batch_size=batch_size,
-                verbose=0,
-                callbacks=[early_stopping]
-            )
-
-            # Store the model
-            self.models[f'lstm_{entity_id}'] = model
-
-            return model
-
-        except Exception as e:
-            print(f"Error training LSTM model for {entity_id}: {e}")
-            return None
-
     def train_arima_model(self,
                          series: pd.Series,
                          entity_id: str,
@@ -330,7 +232,6 @@ class TimeSeriesAnalyzer:
     def analyze_entity_timeseries(self,
                                 events: List[Dict[str, Any]],
                                 entity_id: str,
-                                model_type: str = 'lstm',
                                 frequency: str = '1H') -> Optional[TimeSeriesAnalysisResult]:
         """
         Complete analysis pipeline for a single entity.
@@ -338,7 +239,6 @@ class TimeSeriesAnalyzer:
         Args:
             events: List of Home Assistant events
             entity_id: Entity ID to analyze
-            model_type: Type of model to use ('lstm', 'arima', 'both')
             frequency: Resampling frequency
 
         Returns:
@@ -347,8 +247,8 @@ class TimeSeriesAnalyzer:
         try:
             # Step 1: Preprocess data
             ts_data = self.preprocess_events_to_timeseries(events, entity_id, frequency)
-            if ts_data is None or len(ts_data) < self.look_back * 2:
-                print(f"Not enough data for {entity_id}. Need at least {self.look_back * 2} points.")
+            if ts_data is None or len(ts_data) < 10:
+                print(f"Not enough data for {entity_id}. Need at least 10 data points.")
                 return None
 
             # Normalize data
@@ -358,128 +258,67 @@ class TimeSeriesAnalyzer:
             train_size = int(len(scaled_data) * (1 - self.test_size))
             train, test = scaled_data[0:train_size], scaled_data[train_size:len(scaled_data)]
 
-            # Prepare datasets
-            X_train, y_train = self.create_lstm_dataset(train, self.look_back)
-            X_test, y_test = self.create_lstm_dataset(test, self.look_back)
-
             results = []
 
-            # Step 2: Train and evaluate models
-            if model_type in ['lstm', 'both'] and TF_AVAILABLE:
-                print(f"Training LSTM model for {entity_id}...")
-                lstm_model = self.train_lstm_model(X_train, y_train, entity_id)
+            # Step 2: Train and evaluate ARIMA model
+            print(f"Training ARIMA model for {entity_id}...")
 
-                if lstm_model:
-                    # Make predictions
-                    X_test_reshaped = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
-                    predictions = lstm_model.predict(X_test_reshaped)
+            # Train on original (non-scaled) data since ARIMA works better with original scale
+            arima_model = self.train_arima_model(ts_data['value'], entity_id)
 
-                    # Inverse transform predictions
-                    predictions = self.scaler.inverse_transform(predictions)
-                    y_test_actual = self.scaler.inverse_transform([y_test])
+            if arima_model:
+                # Make predictions
+                forecast_steps = min(self.forecast_horizon, len(test))
+                predictions = arima_model.get_forecast(steps=forecast_steps)
+                pred_mean = predictions.predicted_mean
+                conf_int = predictions.conf_int()
 
-                    # Calculate metrics
-                    mse = mean_squared_error(y_test_actual[0], predictions[:, 0])
-                    rmse = np.sqrt(mse)
+                # Create prediction objects
+                test_dates = ts_data.index[-forecast_steps:]
 
-                    # Create prediction objects
-                    test_dates = ts_data.index[train_size + self.look_back + 1:train_size + self.look_back + 1 + len(predictions)]
+                for i, (date, pred_val) in enumerate(zip(test_dates, pred_mean)):
+                    # Confidence from prediction intervals
+                    lower_bound = conf_int.iloc[i, 0]
+                    upper_bound = conf_int.iloc[i, 1]
+                    confidence = 1.0 - (abs(pred_val - lower_bound) / (upper_bound - lower_bound))
 
-                    for i, (date, pred_val) in enumerate(zip(test_dates, predictions[:, 0])):
-                        confidence = 1.0 - (i / len(predictions))  # Higher confidence for near-term predictions
-                        result = TimeSeriesPrediction(
-                            entity_id=entity_id,
-                            timestamp=date,
-                            predicted_value=float(pred_val),
-                            confidence=float(confidence),
-                            model_type='lstm',
-                            actual_value=float(y_test_actual[0][i]),
-                            error=float(abs(y_test_actual[0][i] - pred_val))
-                        )
-                        results.append(result)
-
-                    # Generate visualization
-                    visualization = self._generate_visualization(
-                        ts_data, train_size, predictions, y_test_actual[0], 'LSTM'
-                    )
-
-                    metrics = {
-                        'mse': float(mse),
-                        'rmse': float(rmse),
-                        'r2_score': float(1 - (mse / np.var(y_test_actual[0]))),
-                        'samples_used': len(X_train)
-                    }
-
-                    lstm_result = TimeSeriesAnalysisResult(
+                    result = TimeSeriesPrediction(
                         entity_id=entity_id,
-                        predictions=results,
-                        model_type='lstm',
-                        training_metrics=metrics,
-                        visualization=visualization
-                    )
-
-                    if model_type == 'lstm':
-                        return lstm_result
-                    else:
-                        results.extend(lstm_result.predictions)
-
-            if model_type in ['arima', 'both'] and STATSMODELS_AVAILABLE:
-                print(f"Training ARIMA model for {entity_id}...")
-                arima_model = self.train_arima_model(ts_data['value'], entity_id)
-
-                if arima_model:
-                    # Make predictions
-                    forecast_steps = min(self.forecast_horizon, len(test))
-                    predictions = arima_model.get_forecast(steps=forecast_steps)
-                    pred_mean = predictions.predicted_mean
-                    conf_int = predictions.conf_int()
-
-                    # Create prediction objects
-                    test_dates = ts_data.index[-forecast_steps:]
-
-                    for i, (date, pred_val) in enumerate(zip(test_dates, pred_mean)):
-                        # Confidence from prediction intervals
-                        lower_bound = conf_int.iloc[i, 0]
-                        upper_bound = conf_int.iloc[i, 1]
-                        confidence = 1.0 - (abs(pred_val - lower_bound) / (upper_bound - lower_bound))
-
-                        result = TimeSeriesPrediction(
-                            entity_id=entity_id,
-                            timestamp=date,
-                            predicted_value=float(pred_val),
-                            confidence=float(confidence),
-                            model_type='arima',
-                            actual_value=float(ts_data.loc[date, 'value']) if date in ts_data.index else None
-                        )
-                        results.append(result)
-
-                    # Calculate metrics
-                    actual_values = [ts_data.loc[date, 'value'] for date in test_dates if date in ts_data.index]
-                    pred_values = [float(p) for p in pred_mean]
-                    mse = mean_squared_error(actual_values, pred_values)
-                    rmse = np.sqrt(mse)
-
-                    # Generate visualization
-                    visualization = self._generate_visualization(
-                        ts_data, train_size, pred_mean.reshape(-1, 1), actual_values, 'ARIMA'
-                    )
-
-                    metrics = {
-                        'mse': float(mse),
-                        'rmse': float(rmse),
-                        'r2_score': float(1 - (mse / np.var(actual_values))),
-                        'samples_used': len(ts_data) - forecast_steps
-                    }
-
-                    arima_result = TimeSeriesAnalysisResult(
-                        entity_id=entity_id,
-                        predictions=results,
+                        timestamp=date,
+                        predicted_value=float(pred_val),
+                        confidence=float(confidence),
                         model_type='arima',
-                        training_metrics=metrics,
-                        visualization=visualization
+                        actual_value=float(ts_data.loc[date, 'value']) if date in ts_data.index else None
                     )
+                    results.append(result)
 
-                    return arima_result
+                # Calculate metrics
+                actual_values = [ts_data.loc[date, 'value'] for date in test_dates if date in ts_data.index]
+                pred_values = [float(p) for p in pred_mean]
+                mse = mean_squared_error(actual_values, pred_values)
+                rmse = np.sqrt(mse)
+
+                # Generate visualization
+                visualization = self._generate_visualization(
+                    ts_data, train_size, pred_mean.reshape(-1, 1), actual_values, 'ARIMA'
+                )
+
+                metrics = {
+                    'mse': float(mse),
+                    'rmse': float(rmse),
+                    'r2_score': float(1 - (mse / np.var(actual_values))) if len(actual_values) > 1 else 1.0,
+                    'samples_used': len(ts_data) - forecast_steps
+                }
+
+                arima_result = TimeSeriesAnalysisResult(
+                    entity_id=entity_id,
+                    predictions=results,
+                    model_type='arima',
+                    training_metrics=metrics,
+                    visualization=visualization
+                )
+
+                return arima_result
 
             return None
 
@@ -513,15 +352,15 @@ class TimeSeriesAnalyzer:
             plt.plot(ts_data.index, ts_data['value'], label='Original Data', alpha=0.5)
 
             # Plot training data
-            train_dates = ts_data.index[:train_size + self.look_back + 1]
+            train_dates = ts_data.index[:train_size]
             plt.plot(train_dates, ts_data.loc[train_dates, 'value'], 'g-', label='Training Data')
 
             # Plot test data and predictions
-            test_dates = ts_data.index[train_size + self.look_back + 1:train_size + self.look_back + 1 + len(predictions)]
+            test_dates = ts_data.index[train_size:train_size + len(predictions)]
             plt.plot(test_dates, actual_values, 'b-', label='Actual Test Data')
             plt.plot(test_dates, predictions, 'r--', label='Predictions')
 
-            plt.title(f'{model_name} Predictions for {ts_data.name}')
+            plt.title(f'{model_name} Predictions for {entity_id}')
             plt.xlabel('Time')
             plt.ylabel('Value')
             plt.legend()
@@ -609,7 +448,7 @@ class TimeSeriesAnalyzer:
 
         # Filter significant patterns
         for time_key, cluster in time_clusters.items():
-            if len(cluster) >= 3:  # At least 3 occurrences
+            if len(cluster) >= 2:  # At least 2 occurrences
                 # Calculate average predicted value
                 avg_value = np.mean([p.predicted_value for p in cluster])
                 avg_confidence = np.mean([p.confidence for p in cluster])
@@ -690,9 +529,7 @@ action:
             Dictionary with model availability information
         """
         return {
-            'lstm_available': TF_AVAILABLE,
             'arima_available': STATSMODELS_AVAILABLE,
-            'tensorflow_version': tf.__version__ if TF_AVAILABLE else None,
             'statsmodels_version': None,  # Would need to import to get version
             'trained_models': list(self.models.keys())
         }
