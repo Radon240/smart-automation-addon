@@ -14,6 +14,18 @@ from user_action_model import ModelStore, UserActionModel, action_events_from_st
 app = Flask(__name__)
 
 MODEL_STORE = ModelStore("/data/model.json")
+TRAINABLE_DOMAINS = {
+    "light",
+    "switch",
+    "climate",
+    "cover",
+    "fan",
+    "lock",
+    "media_player",
+    "input_boolean",
+    "script",
+    "scene",
+}
 
 last_trained_at = None
 last_training_samples = 0
@@ -125,6 +137,49 @@ def _flatten_history_payload(payload: Any) -> List[Dict[str, Any]]:
     return flattened
 
 
+def _fetch_trainable_entity_ids(base_url: str, supervisor_token: str) -> List[str]:
+    states_url = f"{base_url}/states"
+    req = Request(
+        states_url,
+        headers={
+            "Authorization": f"Bearer {supervisor_token}",
+            "Content-Type": "application/json",
+        },
+        method="GET",
+    )
+
+    try:
+        with urlopen(req, timeout=20) as resp:
+            raw = resp.read().decode("utf-8")
+        payload = json.loads(raw)
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch entity list from {states_url}: {e}") from e
+
+    if not isinstance(payload, list):
+        raise RuntimeError("Invalid /states response format")
+
+    entity_ids: List[str] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        entity_id = str(item.get("entity_id") or "").strip()
+        if "." not in entity_id:
+            continue
+        domain = entity_id.split(".", 1)[0]
+        if domain in TRAINABLE_DOMAINS:
+            entity_ids.append(entity_id)
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique_ids = []
+    for eid in entity_ids:
+        if eid in seen:
+            continue
+        seen.add(eid)
+        unique_ids.append(eid)
+    return unique_ids
+
+
 def _fetch_history_from_home_assistant(history_days: int) -> List[Dict[str, Any]]:
     supervisor_token = get_supervisor_token()
     if not supervisor_token:
@@ -134,6 +189,14 @@ def _fetch_history_from_home_assistant(history_days: int) -> List[Dict[str, Any]
         )
 
     base_url = get_supervisor_api_url().rstrip("/")
+    entity_ids = _fetch_trainable_entity_ids(base_url, supervisor_token)
+    if not entity_ids:
+        raise RuntimeError(
+            "No trainable entities found in /states. "
+            "Expected domains: " + ", ".join(sorted(TRAINABLE_DOMAINS))
+        )
+
+    filter_entity_id = ",".join(entity_ids)
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=history_days)
 
@@ -142,8 +205,14 @@ def _fetch_history_from_home_assistant(history_days: int) -> List[Dict[str, Any]
     end_iso = end_time.isoformat().replace("+00:00", "Z")
 
     # Different HA/Supervisor versions accept different history URL shapes.
-    query_url = f"{base_url}/history/period?{urlencode({'start_time': start_iso, 'end_time': end_iso})}"
-    path_url = f"{base_url}/history/period/{quote(start_iso, safe='')}?{urlencode({'end_time': end_iso})}"
+    query_url = (
+        f"{base_url}/history/period?"
+        f"{urlencode({'start_time': start_iso, 'end_time': end_iso, 'filter_entity_id': filter_entity_id})}"
+    )
+    path_url = (
+        f"{base_url}/history/period/{quote(start_iso, safe='')}?"
+        f"{urlencode({'end_time': end_iso, 'filter_entity_id': filter_entity_id})}"
+    )
     candidates = [query_url, path_url]
 
     last_error = "unknown error"
