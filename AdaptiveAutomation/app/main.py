@@ -1,10 +1,10 @@
 ﻿import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 from urllib.error import URLError, HTTPError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from flask import Flask, jsonify, request
@@ -50,11 +50,16 @@ def get_supervisor_token() -> str:
 
 
 def get_supervisor_api_url() -> str:
-    return (
+    raw = (
         os.getenv("SUPERVISOR_API_URL")
         or os.getenv("HASSIO_URL")
         or "http://supervisor/core/api"
     ).strip()
+    if raw.endswith("/"):
+        raw = raw[:-1]
+    if not raw.endswith("/api"):
+        raw = f"{raw}/api"
+    return raw
 
 
 def load_options() -> dict:
@@ -129,40 +134,48 @@ def _fetch_history_from_home_assistant(history_days: int) -> List[Dict[str, Any]
         )
 
     base_url = get_supervisor_api_url().rstrip("/")
-    end_time = datetime.utcnow()
+    end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=history_days)
 
-    query = urlencode(
-        {
-            "start_time": start_time.isoformat() + "Z",
-            "end_time": end_time.isoformat() + "Z",
-        }
-    )
-    url = f"{base_url}/history/period?{query}"
+    # Use RFC3339 UTC timestamps.
+    start_iso = start_time.isoformat().replace("+00:00", "Z")
+    end_iso = end_time.isoformat().replace("+00:00", "Z")
 
-    req = Request(
-        url,
-        headers={
-            "Authorization": f"Bearer {supervisor_token}",
-            "Content-Type": "application/json",
-        },
-        method="GET",
-    )
+    # Different HA/Supervisor versions accept different history URL shapes.
+    query_url = f"{base_url}/history/period?{urlencode({'start_time': start_iso, 'end_time': end_iso})}"
+    path_url = f"{base_url}/history/period/{quote(start_iso, safe='')}?{urlencode({'end_time': end_iso})}"
+    candidates = [query_url, path_url]
 
-    try:
-        with urlopen(req, timeout=15) as resp:
-            raw = resp.read().decode("utf-8")
-    except HTTPError as e:
-        raise RuntimeError(f"Home Assistant API HTTP error: {e.code}") from e
-    except URLError as e:
-        raise RuntimeError(f"Home Assistant API connection error: {e.reason}") from e
+    last_error = "unknown error"
+    for url in candidates:
+        req = Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {supervisor_token}",
+                "Content-Type": "application/json",
+            },
+            method="GET",
+        )
+        try:
+            with urlopen(req, timeout=20) as resp:
+                raw = resp.read().decode("utf-8")
+            payload = json.loads(raw)
+            return _flatten_history_payload(payload)
+        except HTTPError as e:
+            try:
+                body = e.read().decode("utf-8")
+            except Exception:
+                body = ""
+            last_error = f"HTTP {e.code} for {url}. body={body[:400]}"
+            continue
+        except URLError as e:
+            last_error = f"Connection error for {url}: {e.reason}"
+            continue
+        except Exception as e:
+            last_error = f"Unexpected error for {url}: {e}"
+            continue
 
-    try:
-        payload = json.loads(raw)
-    except Exception as e:
-        raise RuntimeError("Invalid JSON from Home Assistant history endpoint") from e
-
-    return _flatten_history_payload(payload)
+    raise RuntimeError(f"Home Assistant history request failed: {last_error}")
 
 
 @app.get("/")
