@@ -1,0 +1,53 @@
+﻿# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDEs / editors
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.python-version
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Python packaging / build
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# .NET
+bin/
+obj/
+*.rsuser
+
+# Logs
+*.log
+
+# Local env / secrets
+.env
+.env.*
+
+# Temporary files
+*.tmp
+*.temp
+*~
