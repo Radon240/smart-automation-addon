@@ -9,6 +9,8 @@ from urllib.request import Request, urlopen
 
 from flask import Flask, jsonify, request
 
+from routine_patterns import build_routine_suggestions
+from sequence_patterns import build_sequence_suggestions
 from user_action_model import ModelStore, UserActionModel, action_events_from_states
 
 app = Flask(__name__)
@@ -84,6 +86,14 @@ def load_options() -> dict:
         "min_confidence": 0.6,
         "prediction_limit": 10,
         "allow_relaxed_fallback": True,
+        "routine_min_support_days": 3,
+        "routine_min_confidence": 0.4,
+        "arrival_to_door_minutes": 20,
+        "door_to_light_minutes": 20,
+        "sequence_window_minutes": 30,
+        "sequence_min_support_days": 3,
+        "sequence_min_confidence": 0.35,
+        "sequence_limit": 20,
         "enabled_domains": sorted(TRAINABLE_DOMAINS),
     }
     if options_file.exists():
@@ -426,6 +436,8 @@ def index():
       <button id="btn-model">GET /api/model-info</button>
       <button id="btn-train">POST /api/train</button>
       <button id="btn-predict-now">GET /api/predict</button>
+      <button id="btn-routines">POST /api/routine-suggestions</button>
+      <button id="btn-sequences">POST /api/sequence-suggestions</button>
       <button id="btn-predict-custom">POST /api/predict (custom body)</button>
       <button id="btn-train-events">POST /api/train-from-events (custom body)</button>
     </div>
@@ -580,6 +592,8 @@ def index():
     document.getElementById("btn-model").onclick = () => callApi("GET", "api/model-info");
     document.getElementById("btn-train").onclick = () => callApi("POST", "api/train", {{}});
     document.getElementById("btn-predict-now").onclick = () => callApi("GET", "api/predict");
+    document.getElementById("btn-routines").onclick = () => callApi("POST", "api/routine-suggestions", {{}});
+    document.getElementById("btn-sequences").onclick = () => callApi("POST", "api/sequence-suggestions", {{}});
     document.getElementById("btn-predict-custom").onclick = () => {{
       const body = parseBody();
       if (body !== null) callApi("POST", "api/predict", body);
@@ -624,6 +638,14 @@ def config():
         min_confidence=_parse_float(options.get("min_confidence", 0.6), 0.6, 0.0, 1.0),
         prediction_limit=_parse_int(options.get("prediction_limit", 10), 10, 1, 100),
         allow_relaxed_fallback=_parse_bool(options.get("allow_relaxed_fallback", True), True),
+        routine_min_support_days=_parse_int(options.get("routine_min_support_days", 3), 3, 1, 365),
+        routine_min_confidence=_parse_float(options.get("routine_min_confidence", 0.4), 0.4, 0.0, 1.0),
+        arrival_to_door_minutes=_parse_int(options.get("arrival_to_door_minutes", 20), 20, 1, 180),
+        door_to_light_minutes=_parse_int(options.get("door_to_light_minutes", 20), 20, 1, 180),
+        sequence_window_minutes=_parse_int(options.get("sequence_window_minutes", 30), 30, 1, 180),
+        sequence_min_support_days=_parse_int(options.get("sequence_min_support_days", 3), 3, 1, 365),
+        sequence_min_confidence=_parse_float(options.get("sequence_min_confidence", 0.35), 0.35, 0.0, 1.0),
+        sequence_limit=_parse_int(options.get("sequence_limit", 20), 20, 1, 100),
         enabled_domains=options.get("enabled_domains", sorted(TRAINABLE_DOMAINS)),
         last_trained_at=last_trained_at,
         last_training_samples=last_training_samples,
@@ -805,6 +827,119 @@ def model_info():
         model_file="/data/model.json",
         last_trained_at=last_trained_at,
         last_training_samples=last_training_samples,
+    )
+
+
+@app.post("/api/routine-suggestions")
+def routine_suggestions():
+    options = load_options()
+    body = request.get_json(silent=True)
+    body = body if isinstance(body, dict) else {}
+
+    history_days = _parse_int(body.get("history_days", options.get("history_days", 7)), 7, 1, 365)
+    min_support_days = _parse_int(
+        body.get("min_support_days", options.get("routine_min_support_days", 3)),
+        3,
+        1,
+        365,
+    )
+    min_confidence = _parse_float(
+        body.get("min_confidence", options.get("routine_min_confidence", 0.4)),
+        0.4,
+        0.0,
+        1.0,
+    )
+    arrival_to_door = _parse_int(
+        body.get("arrival_to_door_minutes", options.get("arrival_to_door_minutes", 20)),
+        20,
+        1,
+        180,
+    )
+    door_to_light = _parse_int(
+        body.get("door_to_light_minutes", options.get("door_to_light_minutes", 20)),
+        20,
+        1,
+        180,
+    )
+
+    try:
+        ha_states = _fetch_history_from_home_assistant(history_days)
+    except Exception as e:
+        return jsonify(status="error", error=str(e)), 502
+
+    suggestions = build_routine_suggestions(
+        states=ha_states,
+        min_support_days=min_support_days,
+        min_confidence=min_confidence,
+        arrival_to_door_minutes=arrival_to_door,
+        door_to_light_minutes=door_to_light,
+    )
+
+    return jsonify(
+        status="ok",
+        history_states=len(ha_states),
+        suggestions=suggestions,
+        params={
+            "history_days": history_days,
+            "min_support_days": min_support_days,
+            "min_confidence": min_confidence,
+            "arrival_to_door_minutes": arrival_to_door,
+            "door_to_light_minutes": door_to_light,
+        },
+    )
+
+
+@app.post("/api/sequence-suggestions")
+def sequence_suggestions():
+    options = load_options()
+    body = request.get_json(silent=True)
+    body = body if isinstance(body, dict) else {}
+
+    history_days = _parse_int(body.get("history_days", options.get("history_days", 7)), 7, 1, 365)
+    window_minutes = _parse_int(
+        body.get("window_minutes", options.get("sequence_window_minutes", 30)),
+        30,
+        1,
+        180,
+    )
+    min_support_days = _parse_int(
+        body.get("min_support_days", options.get("sequence_min_support_days", 3)),
+        3,
+        1,
+        365,
+    )
+    min_confidence = _parse_float(
+        body.get("min_confidence", options.get("sequence_min_confidence", 0.35)),
+        0.35,
+        0.0,
+        1.0,
+    )
+    limit = _parse_int(body.get("limit", options.get("sequence_limit", 20)), 20, 1, 100)
+
+    try:
+        ha_states = _fetch_history_from_home_assistant(history_days)
+    except Exception as e:
+        return jsonify(status="error", error=str(e)), 502
+
+    suggestions = build_sequence_suggestions(
+        states=ha_states,
+        window_minutes=window_minutes,
+        min_support_days=min_support_days,
+        min_confidence=min_confidence,
+        limit=limit,
+    )
+
+    return jsonify(
+        status="ok",
+        history_states=len(ha_states),
+        suggestions=suggestions,
+        params={
+            "history_days": history_days,
+            "window_minutes": window_minutes,
+            "min_support_days": min_support_days,
+            "min_confidence": min_confidence,
+            "limit": limit,
+        },
     )
 
 
