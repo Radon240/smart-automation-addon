@@ -1,5 +1,5 @@
 ﻿name: "AdaptiveAutomation"
-version: "0.1.3"
+version: "0.1.4"
 slug: "adaptive_automation"
 description: "AdaptiveAutomation addon with user action prediction model"
 startup: services
