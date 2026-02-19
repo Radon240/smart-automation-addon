@@ -1,7 +1,7 @@
 ﻿name: "AdaptiveAutomation"
-version: "0.1.0"
+version: "0.1.1"
 slug: "adaptive_automation"
-description: "Basic Home Assistant addon for AdaptiveAutomation"
+description: "AdaptiveAutomation addon with user action prediction model"
 startup: services
 boot: auto
 init: false
@@ -17,9 +17,17 @@ arch:
 options:
   log_level: info
   message: "Hello from AdaptiveAutomation"
+  history_days: 7
+  min_support: 5
+  min_confidence: 0.6
+  prediction_limit: 10
 schema:
   log_level: list(trace|debug|info|notice|warning|error|fatal)
   message: str
+  history_days: int(1,365)
+  min_support: int(1,1000)
+  min_confidence: float(0,1)
+  prediction_limit: int(1,100)
 ports:
   8090/tcp: 8090
 webui: "http://[HOST]:[PORT:8090]"
