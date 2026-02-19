@@ -5,6 +5,7 @@
   "min_support": 5,
   "min_confidence": 0.6,
   "prediction_limit": 10,
+  "allow_relaxed_fallback": true,
   "enabled_domains": [
     "light",
     "switch",

@@ -83,6 +83,7 @@ def load_options() -> dict:
         "min_support": 5,
         "min_confidence": 0.6,
         "prediction_limit": 10,
+        "allow_relaxed_fallback": True,
         "enabled_domains": sorted(TRAINABLE_DOMAINS),
     }
     if options_file.exists():
@@ -114,6 +115,20 @@ def _parse_float(value: Any, default: float, min_value: float, max_value: float)
     except Exception:
         return default
     return max(min_value, min(max_value, parsed))
+
+
+def _parse_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
 
 
 def _build_model_from_options(options: Dict[str, Any]) -> UserActionModel:
@@ -608,6 +623,7 @@ def config():
         min_support=_parse_int(options.get("min_support", 5), 5, 1, 1000),
         min_confidence=_parse_float(options.get("min_confidence", 0.6), 0.6, 0.0, 1.0),
         prediction_limit=_parse_int(options.get("prediction_limit", 10), 10, 1, 100),
+        allow_relaxed_fallback=_parse_bool(options.get("allow_relaxed_fallback", True), True),
         enabled_domains=options.get("enabled_domains", sorted(TRAINABLE_DOMAINS)),
         last_trained_at=last_trained_at,
         last_training_samples=last_training_samples,
@@ -755,16 +771,25 @@ def predict():
         when = datetime.now(timezone.utc)
 
     limit = _parse_int(options.get("prediction_limit", 10), 10, 1, 100)
+    allow_relaxed_fallback = _parse_bool(options.get("allow_relaxed_fallback", True), True)
     if isinstance(body, dict) and "limit" in body:
         limit = _parse_int(body.get("limit"), limit, 1, 100)
+    if isinstance(body, dict) and "allow_relaxed_fallback" in body:
+        allow_relaxed_fallback = _parse_bool(body.get("allow_relaxed_fallback"), allow_relaxed_fallback)
 
-    predictions = model.predict(when=when, limit=limit)
+    predictions = model.predict(
+        when=when,
+        limit=limit,
+        allow_relaxed_fallback=allow_relaxed_fallback,
+        one_per_entity=True,
+    )
 
     return jsonify(
         status="ok",
         at=when.isoformat(),
         predictions=predictions,
         stats=model.stats(),
+        allow_relaxed_fallback=allow_relaxed_fallback,
         last_trained_at=last_trained_at,
         last_training_samples=last_training_samples,
     )

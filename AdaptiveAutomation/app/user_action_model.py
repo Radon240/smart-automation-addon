@@ -161,6 +161,8 @@ class UserActionModel:
         limit: int = 10,
         min_support: Optional[int] = None,
         min_confidence: Optional[float] = None,
+        allow_relaxed_fallback: bool = True,
+        one_per_entity: bool = True,
     ) -> List[Dict[str, Any]]:
         with self._lock:
             support_threshold = self.min_support if min_support is None else min_support
@@ -216,16 +218,36 @@ class UserActionModel:
             # 1) strict slot predictions
             predictions = collect_from_slot(support_threshold, confidence_threshold, "time_slot")
             # 2) relax support if strict is empty
-            if not predictions:
+            if not predictions and allow_relaxed_fallback:
                 predictions = collect_from_slot(1, confidence_threshold, "time_slot_relaxed_support")
             # 3) fallback to global with strict thresholds
             if not predictions:
                 predictions = collect_global(support_threshold, confidence_threshold, "global_fallback")
             # 4) final fallback: global with relaxed support
-            if not predictions:
+            if not predictions and allow_relaxed_fallback:
                 predictions = collect_global(1, confidence_threshold, "global_fallback_relaxed_support")
 
             predictions.sort(key=lambda x: (x["confidence"], x["support"]), reverse=True)
+            if one_per_entity:
+                best_by_entity: Dict[str, Dict[str, Any]] = {}
+                for item in predictions:
+                    entity_id = item["entity_id"]
+                    current = best_by_entity.get(entity_id)
+                    if current is None:
+                        best_by_entity[entity_id] = item
+                        continue
+
+                    item_score = (float(item["confidence"]), int(item["support"]))
+                    curr_score = (float(current["confidence"]), int(current["support"]))
+                    if item_score > curr_score:
+                        best_by_entity[entity_id] = item
+
+                predictions = sorted(
+                    best_by_entity.values(),
+                    key=lambda x: (x["confidence"], x["support"]),
+                    reverse=True,
+                )
+
             return predictions[: max(1, limit)]
 
     def stats(self) -> Dict[str, Any]:

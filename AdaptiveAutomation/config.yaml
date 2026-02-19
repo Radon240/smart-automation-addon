@@ -21,6 +21,7 @@ options:
   min_support: 5
   min_confidence: 0.6
   prediction_limit: 10
+  allow_relaxed_fallback: true
   enabled_domains:
     - light
     - switch
@@ -39,6 +40,7 @@ schema:
   min_support: int(1,1000)
   min_confidence: float(0,1)
   prediction_limit: int(1,100)
+  allow_relaxed_fallback: bool
   enabled_domains:
     - str
 ports:
