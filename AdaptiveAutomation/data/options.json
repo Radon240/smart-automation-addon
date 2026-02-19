@@ -4,5 +4,17 @@
   "history_days": 7,
   "min_support": 5,
   "min_confidence": 0.6,
-  "prediction_limit": 10
+  "prediction_limit": 10,
+  "enabled_domains": [
+    "light",
+    "switch",
+    "climate",
+    "cover",
+    "fan",
+    "lock",
+    "media_player",
+    "input_boolean",
+    "script",
+    "scene"
+  ]
 }

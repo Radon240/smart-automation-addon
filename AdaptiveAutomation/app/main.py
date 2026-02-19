@@ -2,7 +2,7 @@
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
 from urllib.error import URLError, HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -83,6 +83,7 @@ def load_options() -> dict:
         "min_support": 5,
         "min_confidence": 0.6,
         "prediction_limit": 10,
+        "enabled_domains": sorted(TRAINABLE_DOMAINS),
     }
     if options_file.exists():
         try:
@@ -91,6 +92,12 @@ def load_options() -> dict:
         except Exception:
             pass
     return defaults
+
+
+def save_options(options: Dict[str, Any]) -> None:
+    options_file = Path("/data/options.json")
+    options_file.parent.mkdir(parents=True, exist_ok=True)
+    options_file.write_text(json.dumps(options, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _parse_int(value: Any, default: int, min_value: int, max_value: int) -> int:
@@ -137,7 +144,7 @@ def _flatten_history_payload(payload: Any) -> List[Dict[str, Any]]:
     return flattened
 
 
-def _fetch_trainable_entity_ids(base_url: str, supervisor_token: str) -> List[str]:
+def _fetch_states(base_url: str, supervisor_token: str) -> List[Dict[str, Any]]:
     states_url = f"{base_url}/states"
     req = Request(
         states_url,
@@ -157,16 +164,41 @@ def _fetch_trainable_entity_ids(base_url: str, supervisor_token: str) -> List[st
 
     if not isinstance(payload, list):
         raise RuntimeError("Invalid /states response format")
+    return [item for item in payload if isinstance(item, dict)]
 
-    entity_ids: List[str] = []
-    for item in payload:
-        if not isinstance(item, dict):
-            continue
+
+def _collect_domain_counts(states: List[Dict[str, Any]]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for item in states:
         entity_id = str(item.get("entity_id") or "").strip()
         if "." not in entity_id:
             continue
         domain = entity_id.split(".", 1)[0]
-        if domain in TRAINABLE_DOMAINS:
+        counts[domain] = counts.get(domain, 0) + 1
+    return counts
+
+
+def _resolve_enabled_domains(options: Dict[str, Any], available_domains: Set[str]) -> Set[str]:
+    configured = options.get("enabled_domains")
+    if isinstance(configured, list):
+        values = {
+            str(x).strip()
+            for x in configured
+            if isinstance(x, str) and str(x).strip()
+        }
+        if values:
+            return values & available_domains
+    return TRAINABLE_DOMAINS & available_domains
+
+
+def _fetch_trainable_entity_ids(states: List[Dict[str, Any]], enabled_domains: Set[str]) -> List[str]:
+    entity_ids: List[str] = []
+    for item in states:
+        entity_id = str(item.get("entity_id") or "").strip()
+        if "." not in entity_id:
+            continue
+        domain = entity_id.split(".", 1)[0]
+        if domain in enabled_domains:
             entity_ids.append(entity_id)
 
     # Deduplicate while preserving order
@@ -188,12 +220,16 @@ def _fetch_history_from_home_assistant(history_days: int) -> List[Dict[str, Any]
             "and /run/s6/container_environment/*"
         )
 
+    options = load_options()
     base_url = get_supervisor_api_url().rstrip("/")
-    entity_ids = _fetch_trainable_entity_ids(base_url, supervisor_token)
+    states = _fetch_states(base_url, supervisor_token)
+    available_domains = set(_collect_domain_counts(states).keys())
+    enabled_domains = _resolve_enabled_domains(options, available_domains)
+    entity_ids = _fetch_trainable_entity_ids(states, enabled_domains)
     if not entity_ids:
         raise RuntimeError(
             "No trainable entities found in /states. "
-            "Expected domains: " + ", ".join(sorted(TRAINABLE_DOMAINS))
+            "Enabled domains: " + ", ".join(sorted(enabled_domains))
         )
 
     filter_entity_id = ",".join(entity_ids)
@@ -338,6 +374,28 @@ def index():
       font-size: 12px;
       margin-bottom: 8px;
     }}
+    .domains-box {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 6px 10px;
+      margin-top: 8px;
+    }}
+    .domains-item {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 8px;
+      background: #0b1220;
+      font-size: 13px;
+    }}
+    .domains-item label {{
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      cursor: pointer;
+    }}
   </style>
 </head>
 <body>
@@ -349,11 +407,21 @@ def index():
     <div class="grid">
       <button id="btn-health">GET /health</button>
       <button id="btn-config">GET /api/config</button>
+      <button id="btn-domains">GET /api/domains</button>
       <button id="btn-model">GET /api/model-info</button>
       <button id="btn-train">POST /api/train</button>
       <button id="btn-predict-now">GET /api/predict</button>
       <button id="btn-predict-custom">POST /api/predict (custom body)</button>
       <button id="btn-train-events">POST /api/train-from-events (custom body)</button>
+    </div>
+
+    <div class="panel">
+      <div class="hint">Training domains (loaded dynamically from Home Assistant /states):</div>
+      <div class="row">
+        <button id="btn-domains-refresh">Refresh domains</button>
+        <button id="btn-domains-save">Save selected domains</button>
+      </div>
+      <div id="domains-box" class="domains-box"></div>
     </div>
 
     <div class="panel">
@@ -376,6 +444,8 @@ def index():
   <script>
     const output = document.getElementById("output");
     const requestBody = document.getElementById("request-body");
+    const domainsBox = document.getElementById("domains-box");
+    let currentDomains = [];
 
     function show(title, payload) {{
       let bodyText = payload;
@@ -420,8 +490,78 @@ def index():
       }}
     }}
 
+    function renderDomains(domains) {{
+      currentDomains = Array.isArray(domains) ? domains : [];
+      domainsBox.innerHTML = "";
+      if (!currentDomains.length) {{
+        domainsBox.innerHTML = "<div class='muted'>No domains found.</div>";
+        return;
+      }}
+
+      currentDomains.forEach((item) => {{
+        const wrapper = document.createElement("div");
+        wrapper.className = "domains-item";
+
+        const label = document.createElement("label");
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = !!item.enabled;
+        checkbox.dataset.domain = item.domain;
+
+        const text = document.createElement("span");
+        text.textContent = item.domain + " (" + item.entity_count + ")";
+        label.appendChild(checkbox);
+        label.appendChild(text);
+
+        const badge = document.createElement("span");
+        badge.className = "muted";
+        badge.textContent = item.recommended ? "recommended" : "";
+
+        wrapper.appendChild(label);
+        wrapper.appendChild(badge);
+        domainsBox.appendChild(wrapper);
+      }});
+    }}
+
+    function collectEnabledDomains() {{
+      const checked = domainsBox.querySelectorAll("input[type='checkbox']:checked");
+      const values = [];
+      checked.forEach((el) => {{
+        if (el.dataset && el.dataset.domain) values.push(el.dataset.domain);
+      }});
+      return values;
+    }}
+
+    async function loadDomains() {{
+      try {{
+        const res = await fetch("api/domains");
+        const text = await res.text();
+        let json;
+        try {{
+          json = JSON.parse(text);
+        }} catch (_) {{
+          json = text;
+        }}
+        if (res.ok && json && Array.isArray(json.domains)) {{
+          renderDomains(json.domains);
+        }}
+        show("GET api/domains -> " + res.status, json);
+      }} catch (err) {{
+        show("Error loading domains", String(err));
+      }}
+    }}
+
+    async function saveDomains() {{
+      const enabledDomains = collectEnabledDomains();
+      await callApi("POST", "api/domains", {{ enabled_domains: enabledDomains }});
+      await loadDomains();
+    }}
+
     document.getElementById("btn-health").onclick = () => callApi("GET", "health");
     document.getElementById("btn-config").onclick = () => callApi("GET", "api/config");
+    document.getElementById("btn-domains").onclick = () => callApi("GET", "api/domains");
+    document.getElementById("btn-domains-refresh").onclick = () => loadDomains();
+    document.getElementById("btn-domains-save").onclick = () => saveDomains();
     document.getElementById("btn-model").onclick = () => callApi("GET", "api/model-info");
     document.getElementById("btn-train").onclick = () => callApi("POST", "api/train", {{}});
     document.getElementById("btn-predict-now").onclick = () => callApi("GET", "api/predict");
@@ -437,6 +577,7 @@ def index():
       const body = parseBody();
       if (body !== null) requestBody.value = JSON.stringify(body, null, 2);
     }};
+    loadDomains();
   </script>
 </body>
 </html>
@@ -467,9 +608,75 @@ def config():
         min_support=_parse_int(options.get("min_support", 5), 5, 1, 1000),
         min_confidence=_parse_float(options.get("min_confidence", 0.6), 0.6, 0.0, 1.0),
         prediction_limit=_parse_int(options.get("prediction_limit", 10), 10, 1, 100),
+        enabled_domains=options.get("enabled_domains", sorted(TRAINABLE_DOMAINS)),
         last_trained_at=last_trained_at,
         last_training_samples=last_training_samples,
     )
+
+
+@app.get("/api/domains")
+def get_domains():
+    options = load_options()
+    supervisor_token = get_supervisor_token()
+    if not supervisor_token:
+        return jsonify(status="error", error="Supervisor token is missing"), 502
+
+    try:
+        base_url = get_supervisor_api_url().rstrip("/")
+        states = _fetch_states(base_url, supervisor_token)
+    except Exception as e:
+        return jsonify(status="error", error=str(e)), 502
+
+    domain_counts = _collect_domain_counts(states)
+    available = set(domain_counts.keys())
+    enabled = _resolve_enabled_domains(options, available)
+
+    domains = [
+        {
+            "domain": domain,
+            "entity_count": domain_counts[domain],
+            "enabled": domain in enabled,
+            "recommended": domain in TRAINABLE_DOMAINS,
+        }
+        for domain in sorted(domain_counts.keys())
+    ]
+    return jsonify(status="ok", domains=domains, enabled_domains=sorted(enabled))
+
+
+@app.post("/api/domains")
+def update_domains():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(status="error", error="Body must be a JSON object"), 400
+
+    requested = payload.get("enabled_domains")
+    if not isinstance(requested, list):
+        return jsonify(status="error", error="enabled_domains must be a JSON array"), 400
+
+    requested_domains = {
+        str(x).strip()
+        for x in requested
+        if isinstance(x, str) and str(x).strip()
+    }
+
+    supervisor_token = get_supervisor_token()
+    if not supervisor_token:
+        return jsonify(status="error", error="Supervisor token is missing"), 502
+
+    try:
+        base_url = get_supervisor_api_url().rstrip("/")
+        states = _fetch_states(base_url, supervisor_token)
+    except Exception as e:
+        return jsonify(status="error", error=str(e)), 502
+
+    available_domains = set(_collect_domain_counts(states).keys())
+    final_domains = sorted(requested_domains & available_domains)
+
+    options = load_options()
+    options["enabled_domains"] = final_domains
+    save_options(options)
+
+    return jsonify(status="ok", enabled_domains=final_domains)
 
 
 @app.post("/api/train")

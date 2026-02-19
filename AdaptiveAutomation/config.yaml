@@ -21,6 +21,17 @@ options:
   min_support: 5
   min_confidence: 0.6
   prediction_limit: 10
+  enabled_domains:
+    - light
+    - switch
+    - climate
+    - cover
+    - fan
+    - lock
+    - media_player
+    - input_boolean
+    - script
+    - scene
 schema:
   log_level: list(trace|debug|info|notice|warning|error|fatal)
   message: str
@@ -28,6 +39,8 @@ schema:
   min_support: int(1,1000)
   min_confidence: float(0,1)
   prediction_limit: int(1,100)
+  enabled_domains:
+    - str
 ports:
   8090/tcp: 8090
 webui: "http://[HOST]:[PORT:8090]"
