@@ -13,13 +13,48 @@ from user_action_model import ModelStore, UserActionModel, action_events_from_st
 
 app = Flask(__name__)
 
-SUPERVISOR_TOKEN = os.getenv("SUPERVISOR_TOKEN")
-SUPERVISOR_API_URL = os.getenv("SUPERVISOR_API_URL", "http://supervisor/core/api")
-
 MODEL_STORE = ModelStore("/data/model.json")
 
 last_trained_at = None
 last_training_samples = 0
+
+
+def _read_first_existing(paths: List[str]) -> str:
+    for path in paths:
+        p = Path(path)
+        if p.exists():
+            try:
+                value = p.read_text(encoding="utf-8").strip()
+                if value:
+                    return value
+            except Exception:
+                continue
+    return ""
+
+
+def get_supervisor_token() -> str:
+    token = (os.getenv("SUPERVISOR_TOKEN") or "").strip()
+    if token:
+        return token
+
+    token = (os.getenv("HASSIO_TOKEN") or "").strip()
+    if token:
+        return token
+
+    return _read_first_existing(
+        [
+            "/run/s6/container_environment/SUPERVISOR_TOKEN",
+            "/run/s6/container_environment/HASSIO_TOKEN",
+        ]
+    )
+
+
+def get_supervisor_api_url() -> str:
+    return (
+        os.getenv("SUPERVISOR_API_URL")
+        or os.getenv("HASSIO_URL")
+        or "http://supervisor/core/api"
+    ).strip()
 
 
 def load_options() -> dict:
@@ -86,10 +121,14 @@ def _flatten_history_payload(payload: Any) -> List[Dict[str, Any]]:
 
 
 def _fetch_history_from_home_assistant(history_days: int) -> List[Dict[str, Any]]:
-    if not SUPERVISOR_TOKEN:
-        raise RuntimeError("SUPERVISOR_TOKEN is missing")
+    supervisor_token = get_supervisor_token()
+    if not supervisor_token:
+        raise RuntimeError(
+            "Supervisor token is missing. Checked SUPERVISOR_TOKEN, HASSIO_TOKEN "
+            "and /run/s6/container_environment/*"
+        )
 
-    base_url = SUPERVISOR_API_URL.rstrip("/")
+    base_url = get_supervisor_api_url().rstrip("/")
     end_time = datetime.utcnow()
     start_time = end_time - timedelta(days=history_days)
 
@@ -104,7 +143,7 @@ def _fetch_history_from_home_assistant(history_days: int) -> List[Dict[str, Any]
     req = Request(
         url,
         headers={
-            "Authorization": f"Bearer {SUPERVISOR_TOKEN}",
+            "Authorization": f"Bearer {supervisor_token}",
             "Content-Type": "application/json",
         },
         method="GET",
