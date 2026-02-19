@@ -489,7 +489,7 @@ def train():
     model.fit(events)
     MODEL_STORE.save(model)
 
-    last_trained_at = datetime.utcnow().isoformat() + "Z"
+    last_trained_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     last_training_samples = len(events)
 
     return jsonify(
@@ -518,7 +518,7 @@ def train_from_events():
     model.fit(events)
     MODEL_STORE.save(model)
 
-    last_trained_at = datetime.utcnow().isoformat() + "Z"
+    last_trained_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     last_training_samples = len(events)
 
     return jsonify(
@@ -545,7 +545,7 @@ def predict():
         except Exception:
             return jsonify(status="error", error="Invalid timestamp format"), 400
     else:
-        when = datetime.utcnow()
+        when = datetime.now(timezone.utc)
 
     limit = _parse_int(options.get("prediction_limit", 10), 10, 1, 100)
     if isinstance(body, dict) and "limit" in body:
