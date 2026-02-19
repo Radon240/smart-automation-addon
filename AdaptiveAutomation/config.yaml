@@ -1,0 +1,25 @@
+﻿name: "AdaptiveAutomation"
+version: "0.1.0"
+slug: "adaptive_automation"
+description: "Basic Home Assistant addon for AdaptiveAutomation"
+startup: services
+boot: auto
+init: false
+ingress: true
+ingress_port: 8090
+panel_icon: mdi:robot
+auto_update: false
+homeassistant_api: true
+hassio_api: true
+arch:
+  - amd64
+  - aarch64
+options:
+  log_level: info
+  message: "Hello from AdaptiveAutomation"
+schema:
+  log_level: list(trace|debug|info|notice|warning|error|fatal)
+  message: str
+ports:
+  8090/tcp: 8090
+webui: "http://[HOST]:[PORT:8090]"
