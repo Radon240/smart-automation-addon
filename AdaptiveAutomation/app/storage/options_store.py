@@ -34,6 +34,12 @@ DEFAULT_OPTIONS: Dict[str, Any] = {
     "sequence_min_support_days": 3,
     "sequence_min_confidence": 0.35,
     "sequence_limit": 20,
+    "policy_domain_allowlist": [],
+    "policy_domain_denylist": [],
+    "policy_entity_allowlist": [],
+    "policy_entity_denylist": [],
+    "policy_one_per_entity": False,
+    "rules_limit": 50,
     "enabled_domains": sorted(TRAINABLE_DOMAINS),
 }
 

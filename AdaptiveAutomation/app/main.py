@@ -4,6 +4,12 @@ from typing import Any, Dict
 from flask import Flask, jsonify, request
 
 from models.routine_detector import build_routine_suggestions
+from models.rule_scorer import (
+    normalize_routine_rules,
+    normalize_sequence_rules,
+    normalize_state_rules,
+    rank_rules,
+)
 from models.sequence_miner import build_sequence_suggestions
 from models.state_predictor import UserActionModel, action_events_from_states
 from services.history_service import (
@@ -13,6 +19,7 @@ from services.history_service import (
     get_supervisor_api_url,
     get_supervisor_token,
 )
+from services.policy_service import apply_policy
 from storage.options_store import (
     TRAINABLE_DOMAINS,
     load_options,
@@ -43,6 +50,48 @@ def _build_model_from_options(options: Dict[str, Any]) -> UserActionModel:
     else:
         model.set_thresholds(min_support=min_support, min_confidence=min_confidence)
     return model
+
+
+def _collect_raw_suggestions(options: Dict[str, Any], suggestion_type: str) -> Dict[str, Any]:
+    raw: Dict[str, Any] = {"state": [], "routine": [], "sequence": [], "history_states": 0}
+
+    needs_history = suggestion_type in {"all", "routine", "sequence"}
+    ha_states = []
+    if needs_history:
+        history_days = parse_int(options.get("history_days", 7), 7, 1, 365)
+        ha_states = fetch_history_from_home_assistant(history_days)
+        raw["history_states"] = len(ha_states)
+
+    if suggestion_type in {"all", "state"}:
+        model = _build_model_from_options(options)
+        limit = parse_int(options.get("prediction_limit", 10), 10, 1, 100)
+        allow_relaxed_fallback = parse_bool(options.get("allow_relaxed_fallback", True), True)
+        raw["state"] = model.predict(
+            when=datetime.now(timezone.utc),
+            limit=limit,
+            allow_relaxed_fallback=allow_relaxed_fallback,
+            one_per_entity=True,
+        )
+
+    if suggestion_type in {"all", "routine"}:
+        raw["routine"] = build_routine_suggestions(
+            states=ha_states,
+            min_support_days=parse_int(options.get("routine_min_support_days", 3), 3, 1, 365),
+            min_confidence=parse_float(options.get("routine_min_confidence", 0.4), 0.4, 0.0, 1.0),
+            arrival_to_door_minutes=parse_int(options.get("arrival_to_door_minutes", 20), 20, 1, 180),
+            door_to_light_minutes=parse_int(options.get("door_to_light_minutes", 20), 20, 1, 180),
+        )
+
+    if suggestion_type in {"all", "sequence"}:
+        raw["sequence"] = build_sequence_suggestions(
+            states=ha_states,
+            window_minutes=parse_int(options.get("sequence_window_minutes", 30), 30, 1, 180),
+            min_support_days=parse_int(options.get("sequence_min_support_days", 3), 3, 1, 365),
+            min_confidence=parse_float(options.get("sequence_min_confidence", 0.35), 0.35, 0.0, 1.0),
+            limit=parse_int(options.get("sequence_limit", 20), 20, 1, 100),
+        )
+
+    return raw
 
 
 @app.get("/")
@@ -84,6 +133,12 @@ def config():
         sequence_min_support_days=parse_int(options.get("sequence_min_support_days", 3), 3, 1, 365),
         sequence_min_confidence=parse_float(options.get("sequence_min_confidence", 0.35), 0.35, 0.0, 1.0),
         sequence_limit=parse_int(options.get("sequence_limit", 20), 20, 1, 100),
+        policy_domain_allowlist=options.get("policy_domain_allowlist", []),
+        policy_domain_denylist=options.get("policy_domain_denylist", []),
+        policy_entity_allowlist=options.get("policy_entity_allowlist", []),
+        policy_entity_denylist=options.get("policy_entity_denylist", []),
+        policy_one_per_entity=parse_bool(options.get("policy_one_per_entity", False), False),
+        rules_limit=parse_int(options.get("rules_limit", 50), 50, 1, 500),
         enabled_domains=options.get("enabled_domains", sorted(TRAINABLE_DOMAINS)),
         last_trained_at=last_trained_at,
         last_training_samples=last_training_samples,
@@ -184,6 +239,54 @@ def train():
     )
 
 
+@app.post("/api/train/all")
+def train_all():
+    global last_trained_at, last_training_samples
+
+    options = load_options()
+    history_days = parse_int(options.get("history_days", 7), 7, 1, 365)
+
+    try:
+        ha_states = fetch_history_from_home_assistant(history_days)
+    except Exception as e:
+        return jsonify(status="error", error=str(e)), 502
+
+    # Train state model.
+    events = action_events_from_states(ha_states)
+    state_model = _build_model_from_options(options)
+    state_model.fit(events)
+    MODEL_STORE.save(state_model)
+
+    # Analyze routine + sequence on the same history snapshot.
+    routine_rules = build_routine_suggestions(
+        states=ha_states,
+        min_support_days=parse_int(options.get("routine_min_support_days", 3), 3, 1, 365),
+        min_confidence=parse_float(options.get("routine_min_confidence", 0.4), 0.4, 0.0, 1.0),
+        arrival_to_door_minutes=parse_int(options.get("arrival_to_door_minutes", 20), 20, 1, 180),
+        door_to_light_minutes=parse_int(options.get("door_to_light_minutes", 20), 20, 1, 180),
+    )
+    sequence_rules = build_sequence_suggestions(
+        states=ha_states,
+        window_minutes=parse_int(options.get("sequence_window_minutes", 30), 30, 1, 180),
+        min_support_days=parse_int(options.get("sequence_min_support_days", 3), 3, 1, 365),
+        min_confidence=parse_float(options.get("sequence_min_confidence", 0.35), 0.35, 0.0, 1.0),
+        limit=parse_int(options.get("sequence_limit", 20), 20, 1, 100),
+    )
+
+    last_trained_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    last_training_samples = len(events)
+
+    return jsonify(
+        status="ok",
+        trained_at=last_trained_at,
+        history_states=len(ha_states),
+        state_training_samples=last_training_samples,
+        state_stats=state_model.stats(),
+        routine_suggestions_found=len(routine_rules),
+        sequence_suggestions_found=len(sequence_rules),
+    )
+
+
 @app.post("/api/train-from-events")
 def train_from_events():
     global last_trained_at, last_training_samples
@@ -247,6 +350,47 @@ def predict():
         allow_relaxed_fallback=allow_relaxed_fallback,
         last_trained_at=last_trained_at,
         last_training_samples=last_training_samples,
+    )
+
+
+@app.get("/api/suggestions")
+def suggestions():
+    options = load_options()
+    suggestion_type = str(request.args.get("type", "all")).strip().lower()
+    if suggestion_type not in {"all", "state", "routine", "sequence"}:
+        return jsonify(status="error", error="type must be one of: all,state,routine,sequence"), 400
+
+    try:
+        raw = _collect_raw_suggestions(options, suggestion_type)
+    except Exception as e:
+        return jsonify(status="error", error=str(e)), 502
+
+    rules = []
+    rules.extend(normalize_state_rules(raw["state"]))
+    rules.extend(normalize_routine_rules(raw["routine"]))
+    rules.extend(normalize_sequence_rules(raw["sequence"]))
+
+    rules_limit = parse_int(options.get("rules_limit", 50), 50, 1, 500)
+    ranked = rank_rules(rules, limit=rules_limit)
+    filtered = apply_policy(ranked, options)
+    filtered.sort(
+        key=lambda x: (float(x.get("score", 0.0)), float(x.get("confidence", 0.0)), int(x.get("support_days", 0))),
+        reverse=True,
+    )
+
+    return jsonify(
+        status="ok",
+        type=suggestion_type,
+        history_states=raw.get("history_states", 0),
+        counts={
+            "state": len(raw["state"]),
+            "routine": len(raw["routine"]),
+            "sequence": len(raw["sequence"]),
+            "combined": len(rules),
+            "ranked": len(ranked),
+            "after_policy": len(filtered),
+        },
+        rules=filtered,
     )
 
 

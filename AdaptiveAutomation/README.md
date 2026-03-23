@@ -157,6 +157,18 @@ This is useful for scenarios like:
 - `sequence_limit`
   - Maximum number of sequence suggestions returned by API.
 
+- `policy_domain_allowlist`, `policy_domain_denylist`
+  - Domain-level rule filtering for unified suggestions.
+
+- `policy_entity_allowlist`, `policy_entity_denylist`
+  - Entity-level rule filtering for unified suggestions.
+
+- `policy_one_per_entity`
+  - Keep only best ranked rule per entity in unified suggestions.
+
+- `rules_limit`
+  - Final maximum number of rules returned by unified suggestions API.
+
 ## Practical Tuning
 
 - If no predictions:
@@ -175,6 +187,18 @@ This is useful for scenarios like:
 - `GET /health` - addon and model status
 - `GET /api/config` - effective configuration
 - `POST /api/train` - train model from Home Assistant history API
+- `POST /api/train/all` - train state model and evaluate routine/sequence analyzers on same history snapshot
 - `POST /api/train-from-events` - train model from posted JSON events (local testing)
 - `GET/POST /api/predict` - get predictions for now or custom timestamp
 - `GET /api/model-info` - model metadata and stats
+- `GET /api/suggestions?type=all|state|routine|sequence` - unified ranked suggestions with policy filters
+
+## Unified Suggestions Pipeline
+
+`GET /api/suggestions` performs:
+
+1. collect raw suggestions from selected analyzers
+2. normalize to common rule schema
+3. score and rank rules (`score`)
+4. apply policy filters
+5. return final rule list and per-stage counts
