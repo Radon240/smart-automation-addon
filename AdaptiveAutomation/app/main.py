@@ -40,6 +40,29 @@ last_trained_at = None
 last_training_samples = 0
 
 
+EDITABLE_OPTION_KEYS = {
+    "history_days",
+    "min_support",
+    "min_confidence",
+    "prediction_limit",
+    "allow_relaxed_fallback",
+    "routine_min_support_days",
+    "routine_min_confidence",
+    "arrival_to_door_minutes",
+    "door_to_light_minutes",
+    "sequence_window_minutes",
+    "sequence_min_support_days",
+    "sequence_min_confidence",
+    "sequence_limit",
+    "policy_domain_allowlist",
+    "policy_domain_denylist",
+    "policy_entity_allowlist",
+    "policy_entity_denylist",
+    "policy_one_per_entity",
+    "rules_limit",
+}
+
+
 def _build_model_from_options(options: Dict[str, Any]) -> UserActionModel:
     model = MODEL_STORE.load()
     min_support = parse_int(options.get("min_support", 5), 5, 1, 1000)
@@ -94,6 +117,45 @@ def _collect_raw_suggestions(options: Dict[str, Any], suggestion_type: str) -> D
     return raw
 
 
+def _as_string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(x).strip() for x in value if str(x).strip()]
+    if isinstance(value, str):
+        return [x.strip() for x in value.split(",") if x.strip()]
+    return []
+
+
+def _apply_settings_patch(options: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(options)
+    for key, value in patch.items():
+        if key not in EDITABLE_OPTION_KEYS:
+            continue
+        if key in {"history_days"}:
+            merged[key] = parse_int(value, parse_int(options.get(key, 7), 7, 1, 365), 1, 365)
+        elif key in {"min_support"}:
+            merged[key] = parse_int(value, parse_int(options.get(key, 5), 5, 1, 1000), 1, 1000)
+        elif key in {"prediction_limit", "sequence_limit"}:
+            merged[key] = parse_int(value, parse_int(options.get(key, 20), 20, 1, 100), 1, 100)
+        elif key in {"rules_limit"}:
+            merged[key] = parse_int(value, parse_int(options.get(key, 50), 50, 1, 500), 1, 500)
+        elif key in {"routine_min_support_days", "sequence_min_support_days"}:
+            merged[key] = parse_int(value, parse_int(options.get(key, 3), 3, 1, 365), 1, 365)
+        elif key in {"arrival_to_door_minutes", "door_to_light_minutes", "sequence_window_minutes"}:
+            merged[key] = parse_int(value, parse_int(options.get(key, 20), 20, 1, 180), 1, 180)
+        elif key in {"min_confidence", "routine_min_confidence", "sequence_min_confidence"}:
+            merged[key] = parse_float(value, parse_float(options.get(key, 0.4), 0.4, 0.0, 1.0), 0.0, 1.0)
+        elif key in {"allow_relaxed_fallback", "policy_one_per_entity"}:
+            merged[key] = parse_bool(value, parse_bool(options.get(key, False), False))
+        elif key in {
+            "policy_domain_allowlist",
+            "policy_domain_denylist",
+            "policy_entity_allowlist",
+            "policy_entity_denylist",
+        }:
+            merged[key] = _as_string_list(value)
+    return merged
+
+
 @app.get("/")
 def index():
     options = load_options()
@@ -143,6 +205,31 @@ def config():
         last_trained_at=last_trained_at,
         last_training_samples=last_training_samples,
     )
+
+
+@app.get("/api/settings")
+def settings():
+    options = load_options()
+    payload = {k: options.get(k) for k in sorted(EDITABLE_OPTION_KEYS)}
+    payload["enabled_domains"] = options.get("enabled_domains", sorted(TRAINABLE_DOMAINS))
+    return jsonify(status="ok", settings=payload)
+
+
+@app.post("/api/settings")
+def update_settings():
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify(status="error", error="Body must be a JSON object"), 400
+    patch = body.get("settings")
+    if isinstance(patch, dict):
+        body = patch
+
+    current = load_options()
+    updated = _apply_settings_patch(current, body)
+    save_options(updated)
+    payload = {k: updated.get(k) for k in sorted(EDITABLE_OPTION_KEYS)}
+    payload["enabled_domains"] = updated.get("enabled_domains", sorted(TRAINABLE_DOMAINS))
+    return jsonify(status="ok", settings=payload)
 
 
 @app.get("/api/domains")
@@ -392,6 +479,31 @@ def suggestions():
         },
         rules=filtered,
     )
+
+
+@app.get("/api/rules/<rule_id>")
+def rule_details(rule_id: str):
+    suggestion_type = str(request.args.get("type", "all")).strip().lower()
+    if suggestion_type not in {"all", "state", "routine", "sequence"}:
+        return jsonify(status="error", error="type must be one of: all,state,routine,sequence"), 400
+
+    options = load_options()
+    try:
+        raw = _collect_raw_suggestions(options, suggestion_type)
+    except Exception as e:
+        return jsonify(status="error", error=str(e)), 502
+
+    rules = []
+    rules.extend(normalize_state_rules(raw["state"]))
+    rules.extend(normalize_routine_rules(raw["routine"]))
+    rules.extend(normalize_sequence_rules(raw["sequence"]))
+    ranked = rank_rules(rules, limit=parse_int(options.get("rules_limit", 50), 50, 1, 500))
+    filtered = apply_policy(ranked, options)
+
+    for rule in filtered:
+        if str(rule.get("id")) == rule_id:
+            return jsonify(status="ok", rule=rule)
+    return jsonify(status="error", error="Rule not found"), 404
 
 
 @app.get("/api/model-info")
